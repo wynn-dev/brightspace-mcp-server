@@ -19,6 +19,16 @@ export { TokenBucket } from "./rate-limiter.js";
 // Errors
 export { ApiError, RateLimitError, NetworkError, isApiError, isApiStatus } from "./errors.js";
 
+// Pagination
+export {
+  getAllLpPages,
+  getAllObjectListPages,
+  unwrapObjects,
+  withBookmark,
+  nextToPath,
+} from "./pagination.js";
+export type { LpPagedResult, ObjectListPage, PageOptions } from "./pagination.js";
+
 // Types
 export type {
   ApiVersions,
