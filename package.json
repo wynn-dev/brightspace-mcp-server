@@ -29,7 +29,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "dotenv": "^17.4.2",
     "file-type": "^22.0.2",
-    "playwright": "^1.58.2",
+    "playwright": "^1.62.1",
     "sanitize-filename": "^1.6.3",
     "turndown": "^7.2.4",
     "unpdf": "^1.8.1",
