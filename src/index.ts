@@ -9,6 +9,7 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { enableStdoutGuard, log } from "./utils/logger.js";
+import { loadEnvFiles } from "./utils/env.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
 import { D2LApiClient } from "./api/index.js";
@@ -36,7 +37,8 @@ if (subcommand === 'setup') {
 
   async function main(): Promise<void> {
     try {
-      // Load configuration
+      // Load configuration (.env.local / .env first, then config store + env)
+      loadEnvFiles();
       const config = loadConfig();
       log("DEBUG", "Configuration loaded", { sessionDir: config.sessionDir });
 

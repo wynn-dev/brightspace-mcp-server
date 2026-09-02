@@ -52,6 +52,8 @@ To reach Brightspace from an MCP client on another machine, serve MCP over Strea
 MCP_AUTH_TOKEN="$(openssl rand -hex 32)" MCP_HTTP_HOST=0.0.0.0 npm run start:http
 ```
 
+Or put those settings in `.env` / `.env.local` (see `.env.example`) and just run `npm run start:http`.
+
 This exposes the 11 read-only tools at `http://<host>:8787/mcp` (`download_file` is left out because it would write to the server's disk). Clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`:
 
 ```bash
@@ -85,7 +87,7 @@ Sessions re-authenticate automatically. If that fails (missed Duo push, expired 
 
 ## Configuration
 
-Set in `~/.brightspace-mcp/config.json` (written by the wizard) or as environment variables, which take precedence:
+Set in `~/.brightspace-mcp/config.json` (written by the wizard), or as environment variables — either in your shell or in a `.env` / `.env.local` file in the project root (copy `.env.example`). Precedence is shell > `.env.local` > `.env` > `config.json`.
 
 | Variable | Default | Purpose |
 |---|---|---|

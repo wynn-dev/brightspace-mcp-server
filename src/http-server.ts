@@ -10,6 +10,7 @@
  */
 
 import { log } from "./utils/logger.js";
+import { loadEnvFiles } from "./utils/env.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
 import { D2LApiClient } from "./api/index.js";
@@ -35,6 +36,7 @@ function parseList(raw: string | undefined): string[] | undefined {
 }
 
 async function main(): Promise<void> {
+  const envFiles = loadEnvFiles();
   const config = loadConfig();
   const host = process.env.MCP_HTTP_HOST || DEFAULT_HOST;
   const port = parsePort(process.env.MCP_HTTP_PORT);
@@ -46,6 +48,7 @@ async function main(): Promise<void> {
   log("INFO", "  github.com/rohanmuppa/brightspace-mcp-server");
   log("INFO", "========================================");
   log("INFO", "");
+  if (envFiles.length > 0) log("INFO", `Loaded environment from ${envFiles.join(", ")}`);
 
   const tokenManager = new TokenManager(config.sessionDir);
   const authRunner = new AuthRunner();
