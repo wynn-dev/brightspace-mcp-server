@@ -38,6 +38,7 @@ export function registerGetClasslistEmails(
         "Use this when the user wants a list of emails for a class, needs to email the whole class, " +
         "or wants contact info for everyone enrolled.",
       inputSchema: GetClasslistEmailsSchema,
+      annotations: { readOnlyHint: true },
     },
     async (args: any) => {
       try {
