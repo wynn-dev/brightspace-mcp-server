@@ -19,4 +19,7 @@ export { registerGetDiscussions } from "./get-discussions.js";
 
 // Re-export shared helpers and schemas for convenience
 export { toolResponse, errorResponse, sanitizeError } from "./tool-helpers.js";
+export { defineTool } from "./define-tool.js";
+export type { RegisterTool, ToolContext } from "./define-tool.js";
+export { fetchEnrolledCourses, settleAcrossCourses } from "./course-helpers.js";
 export * from "./schemas.js";

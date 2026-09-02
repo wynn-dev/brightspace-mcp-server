@@ -20,6 +20,15 @@ export class ApiError extends AuthError {
   }
 }
 
+export function isApiError(error: unknown, status?: number): error is ApiError {
+  return error instanceof ApiError && (status === undefined || error.status === status);
+}
+
+/** True if `error` is an ApiError with one of the given HTTP statuses. */
+export function isApiStatus(error: unknown, ...statuses: number[]): error is ApiError {
+  return error instanceof ApiError && statuses.includes(error.status);
+}
+
 // Rate limit error (429 Too Many Requests)
 export class RateLimitError extends ApiError {
   constructor(

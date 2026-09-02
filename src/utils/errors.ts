@@ -25,6 +25,14 @@ export class BrowserAuthError extends AuthError {
   }
 }
 
+/** True if `error` is a Node system error, optionally with the given code (e.g. "ENOENT"). */
+export function isErrnoException(error: unknown, code?: string): error is NodeJS.ErrnoException {
+  return (
+    error instanceof Error &&
+    (code === undefined || (error as NodeJS.ErrnoException).code === code)
+  );
+}
+
 export class SessionStoreError extends AuthError {
   constructor(message: string, cause?: Error) {
     super(`[PBMCP-1004] Session store error: ${message}`, cause);

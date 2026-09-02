@@ -4,15 +4,12 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { D2LApiClient, DEFAULT_CACHE_TTLS } from "../api/index.js";
-import {
-  GetAnnouncementsSchema,
-} from "./schemas.js";
-import { toolResponse, sanitizeError } from "./tool-helpers.js";
+import { DEFAULT_CACHE_TTLS, type D2LApiClient } from "../api/index.js";
+import { GetAnnouncementsSchema } from "./schemas.js";
+import { defineTool } from "./define-tool.js";
+import { fetchEnrolledCourses, settleAcrossCourses } from "./course-helpers.js";
+import { toolResponse } from "./tool-helpers.js";
 import { log } from "../utils/logger.js";
-import { applyCourseFilter } from "../utils/course-filter.js";
-import type { AppConfig } from "../types/index.js";
 
 interface NewsItem {
   Id: number;
@@ -27,33 +24,9 @@ interface NewsItem {
   IsPublished: boolean;
   IsPinned: boolean;
   IsGlobal: boolean;
-  Attachments: any[];
+  Attachments: unknown[];
 }
 
-interface EnrollmentItem {
-  OrgUnit: {
-    Id: number;
-    Name: string;
-    Code: string;
-  };
-  Access: {
-    ClasslistRoleName: string;
-    IsActive: boolean;
-    LastAccessed: string | null;
-  };
-}
-
-interface EnrollmentResponse {
-  Items: EnrollmentItem[];
-  PagingInfo?: {
-    HasMoreItems: boolean;
-    Bookmark?: string;
-  };
-}
-
-/**
- * Map a raw D2L news item to a clean announcement object.
- */
 function mapNewsItem(item: NewsItem) {
   return {
     id: item.Id,
@@ -66,128 +39,49 @@ function mapNewsItem(item: NewsItem) {
   };
 }
 
-/**
- * Register get_announcements tool
- */
-export function registerGetAnnouncements(
-  server: McpServer,
-  apiClient: D2LApiClient,
-  config: AppConfig
-): void {
-  server.registerTool(
-    "get_announcements",
-    {
-      title: "Get Announcements",
-      description:
-        "Fetch recent announcements from your courses. Can filter to a specific course or get announcements across all courses. Use this when the user asks about announcements, news, updates from instructors, recent posts, or what professors said.",
-      inputSchema: GetAnnouncementsSchema,
-      annotations: { readOnlyHint: true },
-    },
-    async (args: any) => {
-      try {
-        log("DEBUG", "get_announcements tool called", { args });
-
-        // Parse and validate input
-        const { courseId, count } = GetAnnouncementsSchema.parse(args);
-
-        // Single course case
-        if (courseId) {
-          const path = apiClient.le(courseId, "/news/");
-          const newsItems = await apiClient.get<NewsItem[]>(path, {
-            ttl: DEFAULT_CACHE_TTLS.announcements,
-          });
-
-          // Map to clean objects
-          const announcements = newsItems
-            .map(mapNewsItem)
-            .sort(
-              (a, b) =>
-                new Date(b.createdDate).getTime() -
-                new Date(a.createdDate).getTime()
-            )
-            .slice(0, count);
-
-          log(
-            "INFO",
-            `get_announcements: Retrieved ${announcements.length} announcements for course ${courseId}`
-          );
-          return toolResponse(announcements);
-        }
-
-        // All courses case
-        // First, fetch enrolled courses
-        const enrollmentPath = apiClient.lp(
-          "/enrollments/myenrollments/?orgUnitTypeId=3&isActive=true"
-        );
-        const enrollmentResponse = await apiClient.get<EnrollmentResponse>(
-          enrollmentPath,
-          { ttl: DEFAULT_CACHE_TTLS.enrollments }
-        );
-
-        // Apply course filter
-        const filteredEnrollments = applyCourseFilter(
-          enrollmentResponse.Items.map(item => ({
-            id: item.OrgUnit.Id,
-            name: item.OrgUnit.Name,
-            code: item.OrgUnit.Code,
-            isActive: item.Access.IsActive,
-            ...item,
-          })),
-          config.courseFilter
-        );
-
-        // Fetch announcements for each course (handle 403s gracefully)
-        const announcementPromises = filteredEnrollments.map(
-          async (item) => {
-            try {
-              const path = apiClient.le(item.OrgUnit.Id, "/news/");
-              const newsItems = await apiClient.get<NewsItem[]>(path, {
-                ttl: DEFAULT_CACHE_TTLS.announcements,
-              });
-
-              return newsItems.map((newsItem) => ({
-                ...mapNewsItem(newsItem),
-                courseId: item.OrgUnit.Id,
-                courseName: item.OrgUnit.Name,
-              }));
-            } catch (error: any) {
-              // 403 means no access (past course, etc) - log and skip
-              if (error?.status === 403) {
-                log(
-                  "DEBUG",
-                  `get_announcements: 403 Forbidden for course ${item.OrgUnit.Id} (${item.OrgUnit.Name}) - skipping`
-                );
-                return [];
-              }
-              throw error; // Re-throw other errors
-            }
-          }
-        );
-
-        const results = await Promise.allSettled(announcementPromises);
-        const allAnnouncements = results
-          .filter(
-            (r): r is PromiseFulfilledResult<any> => r.status === "fulfilled"
-          )
-          .flatMap((r) => r.value);
-
-        // Sort by created date and slice to count
-        const announcements = allAnnouncements
-          .sort(
-            (a, b) =>
-              new Date(b.createdDate).getTime() -
-              new Date(a.createdDate).getTime()
-          )
-          .slice(0, count);
-
-        log(
-          "INFO",
-          `get_announcements: Retrieved ${announcements.length} announcements (out of ${allAnnouncements.length} total across ${enrollmentResponse.Items.length} courses)`
-        );
-        return toolResponse(announcements);
-      } catch (error) {
-        return sanitizeError(error);
-      }
-    }
-  );
+function fetchCourseNews(apiClient: D2LApiClient, courseId: number) {
+  return apiClient.get<NewsItem[]>(apiClient.le(courseId, "/news/"), {
+    ttl: DEFAULT_CACHE_TTLS.announcements,
+  });
 }
+
+/** Newest first, capped at `count`. */
+function newestFirst<T extends { createdDate: string }>(items: T[], count: number): T[] {
+  return [...items]
+    .sort((a, b) => new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime())
+    .slice(0, count);
+}
+
+export const registerGetAnnouncements = defineTool(
+  {
+    name: "get_announcements",
+    title: "Get Announcements",
+    description:
+      "Fetch recent announcements from your courses. Can filter to a specific course or get announcements across all courses. Use this when the user asks about announcements, news, updates from instructors, recent posts, or what professors said.",
+    schema: GetAnnouncementsSchema,
+  },
+  async ({ courseId, count }, { apiClient, config }) => {
+    if (courseId) {
+      const announcements = newestFirst((await fetchCourseNews(apiClient, courseId)).map(mapNewsItem), count);
+      log("INFO", `get_announcements: Retrieved ${announcements.length} announcements for course ${courseId}`);
+      return toolResponse(announcements);
+    }
+
+    const enrolled = await fetchEnrolledCourses(apiClient, config);
+    const perCourse = await settleAcrossCourses(enrolled, "get_announcements", async (course) =>
+      (await fetchCourseNews(apiClient, course.id)).map((item) => ({
+        ...mapNewsItem(item),
+        courseId: course.id,
+        courseName: course.name,
+      }))
+    );
+    const all = perCourse.flat();
+    const announcements = newestFirst(all, count);
+
+    log(
+      "INFO",
+      `get_announcements: Retrieved ${announcements.length} announcements (out of ${all.length} total across ${enrolled.length} courses)`
+    );
+    return toolResponse(announcements);
+  }
+);

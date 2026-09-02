@@ -4,10 +4,11 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { D2LApiClient, DEFAULT_CACHE_TTLS } from "../api/index.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { DEFAULT_CACHE_TTLS, isApiStatus, type D2LApiClient } from "../api/index.js";
 import { GetDiscussionsSchema } from "./schemas.js";
-import { toolResponse, sanitizeError, errorResponse } from "./tool-helpers.js";
+import { defineTool } from "./define-tool.js";
+import { toolResponse, errorResponse } from "./tool-helpers.js";
 import { convertHtmlToMarkdown } from "../utils/html-converter.js";
 import { log } from "../utils/logger.js";
 
@@ -60,81 +61,61 @@ interface D2LPost {
   IsRead: boolean;
 }
 
-/**
- * Register get_discussions tool
- */
-export function registerGetDiscussions(
-  server: McpServer,
-  apiClient: D2LApiClient
-): void {
-  server.registerTool(
-    "get_discussions",
-    {
-      title: "Get Discussions",
-      description:
-        "Fetch discussion board content for a course including forums, topics, and posts. Use this when the user asks about discussion boards, forum posts, class discussions, or wants to see what's been posted. Provide just courseId to list all forums and their topics. Add forumId to get topics and posts for a specific forum. Add both forumId and topicId to get all posts in a specific discussion topic.",
-      inputSchema: GetDiscussionsSchema,
-      annotations: { readOnlyHint: true },
-    },
-    async (args: any) => {
-      try {
-        log("DEBUG", "get_discussions tool called", { args });
-
-        const { courseId, forumId, topicId } = GetDiscussionsSchema.parse(args);
-
-        // topicId requires forumId
-        if (topicId !== undefined && forumId === undefined) {
-          return errorResponse(
-            "topicId requires forumId. Provide both forumId and topicId to get posts for a specific topic."
-          );
-        }
-
-        // Specific topic — get posts
-        if (forumId !== undefined && topicId !== undefined) {
-          return await getTopicPosts(apiClient, courseId, forumId, topicId);
-        }
-
-        // Specific forum — get its topics + posts
-        if (forumId !== undefined) {
-          return await getForumDetail(apiClient, courseId, forumId);
-        }
-
-        // All forums overview
-        return await getForumsOverview(apiClient, courseId);
-      } catch (error) {
-        return sanitizeError(error);
-      }
+export const registerGetDiscussions = defineTool(
+  {
+    name: "get_discussions",
+    title: "Get Discussions",
+    description:
+      "Fetch discussion board content for a course including forums, topics, and posts. Use this when the user asks about discussion boards, forum posts, class discussions, or wants to see what's been posted. Provide just courseId to list all forums and their topics. Add forumId to get topics and posts for a specific forum. Add both forumId and topicId to get all posts in a specific discussion topic.",
+    schema: GetDiscussionsSchema,
+  },
+  async ({ courseId, forumId, topicId }, { apiClient }) => {
+    if (topicId !== undefined && forumId === undefined) {
+      return errorResponse(
+        "topicId requires forumId. Provide both forumId and topicId to get posts for a specific topic."
+      );
     }
+    if (forumId !== undefined && topicId !== undefined) {
+      return getTopicPosts(apiClient, courseId, forumId, topicId);
+    }
+    if (forumId !== undefined) {
+      return getForumDetail(apiClient, courseId, forumId);
+    }
+    return getForumsOverview(apiClient, courseId);
+  }
+);
+
+function fetchTopics(apiClient: D2LApiClient, courseId: number, forumId: number) {
+  return apiClient.get<D2LTopic[]>(
+    apiClient.le(courseId, `/discussions/forums/${forumId}/topics/`),
+    { ttl: DEFAULT_CACHE_TTLS.courseContent }
+  );
+}
+
+function fetchPosts(apiClient: D2LApiClient, courseId: number, forumId: number, topicId: number) {
+  return apiClient.get<D2LPost[]>(
+    apiClient.le(courseId, `/discussions/forums/${forumId}/topics/${topicId}/posts/`),
+    { ttl: DEFAULT_CACHE_TTLS.announcements }
   );
 }
 
 /**
  * Get all forums for a course with their topics (no posts).
  */
-async function getForumsOverview(
-  apiClient: D2LApiClient,
-  courseId: number
-): Promise<any> {
-  const forumsPath = apiClient.le(courseId, "/discussions/forums/");
-  const forums = await apiClient.get<D2LForum[]>(forumsPath, {
-    ttl: DEFAULT_CACHE_TTLS.courseContent,
-  });
+async function getForumsOverview(apiClient: D2LApiClient, courseId: number): Promise<CallToolResult> {
+  const forums = await apiClient.get<D2LForum[]>(
+    apiClient.le(courseId, "/discussions/forums/"),
+    { ttl: DEFAULT_CACHE_TTLS.courseContent }
+  );
 
   const result = [];
 
   for (const forum of forums) {
-    // Fetch topics for each forum
     let topics: D2LTopic[] = [];
     try {
-      const topicsPath = apiClient.le(
-        courseId,
-        `/discussions/forums/${forum.ForumId}/topics/`
-      );
-      topics = await apiClient.get<D2LTopic[]>(topicsPath, {
-        ttl: DEFAULT_CACHE_TTLS.courseContent,
-      });
-    } catch (error: any) {
-      if (error?.status === 403) {
+      topics = await fetchTopics(apiClient, courseId, forum.ForumId);
+    } catch (error) {
+      if (isApiStatus(error, 403)) {
         log("DEBUG", `No access to topics for forum ${forum.ForumId}, skipping`);
       } else {
         log("DEBUG", `Failed to fetch topics for forum ${forum.ForumId}`, error);
@@ -161,16 +142,9 @@ async function getForumsOverview(
     });
   }
 
-  log(
-    "INFO",
-    `get_discussions: Retrieved ${forums.length} forums for course ${courseId}`
-  );
+  log("INFO", `get_discussions: Retrieved ${forums.length} forums for course ${courseId}`);
 
-  return toolResponse({
-    courseId,
-    forumCount: result.length,
-    forums: result,
-  });
+  return toolResponse({ courseId, forumCount: result.length, forums: result });
 }
 
 /**
@@ -180,39 +154,20 @@ async function getForumDetail(
   apiClient: D2LApiClient,
   courseId: number,
   forumId: number
-): Promise<any> {
-  // Fetch forum info
-  const forumPath = apiClient.le(
-    courseId,
-    `/discussions/forums/${forumId}`
+): Promise<CallToolResult> {
+  const forum = await apiClient.get<D2LForum>(
+    apiClient.le(courseId, `/discussions/forums/${forumId}`),
+    { ttl: DEFAULT_CACHE_TTLS.courseContent }
   );
-  const forum = await apiClient.get<D2LForum>(forumPath, {
-    ttl: DEFAULT_CACHE_TTLS.courseContent,
-  });
+  const topics = await fetchTopics(apiClient, courseId, forumId);
 
-  // Fetch topics
-  const topicsPath = apiClient.le(
-    courseId,
-    `/discussions/forums/${forumId}/topics/`
-  );
-  const topics = await apiClient.get<D2LTopic[]>(topicsPath, {
-    ttl: DEFAULT_CACHE_TTLS.courseContent,
-  });
-
-  // Fetch posts for each topic
   const topicsWithPosts = [];
   for (const topic of topics) {
     let posts: D2LPost[] = [];
     try {
-      const postsPath = apiClient.le(
-        courseId,
-        `/discussions/forums/${forumId}/topics/${topic.TopicId}/posts/`
-      );
-      posts = await apiClient.get<D2LPost[]>(postsPath, {
-        ttl: DEFAULT_CACHE_TTLS.announcements,
-      });
-    } catch (error: any) {
-      if (error?.status === 403) {
+      posts = await fetchPosts(apiClient, courseId, forumId, topic.TopicId);
+    } catch (error) {
+      if (isApiStatus(error, 403)) {
         log("DEBUG", `No access to posts for topic ${topic.TopicId}, skipping`);
       } else {
         log("DEBUG", `Failed to fetch posts for topic ${topic.TopicId}`, error);
@@ -234,10 +189,7 @@ async function getForumDetail(
     });
   }
 
-  log(
-    "INFO",
-    `get_discussions: Retrieved forum ${forumId} with ${topics.length} topics for course ${courseId}`
-  );
+  log("INFO", `get_discussions: Retrieved forum ${forumId} with ${topics.length} topics for course ${courseId}`);
 
   return toolResponse({
     courseId,
@@ -261,29 +213,14 @@ async function getTopicPosts(
   courseId: number,
   forumId: number,
   topicId: number
-): Promise<any> {
-  // Fetch topic info
-  const topicPath = apiClient.le(
-    courseId,
-    `/discussions/forums/${forumId}/topics/${topicId}`
+): Promise<CallToolResult> {
+  const topic = await apiClient.get<D2LTopic>(
+    apiClient.le(courseId, `/discussions/forums/${forumId}/topics/${topicId}`),
+    { ttl: DEFAULT_CACHE_TTLS.courseContent }
   );
-  const topic = await apiClient.get<D2LTopic>(topicPath, {
-    ttl: DEFAULT_CACHE_TTLS.courseContent,
-  });
+  const posts = await fetchPosts(apiClient, courseId, forumId, topicId);
 
-  // Fetch posts
-  const postsPath = apiClient.le(
-    courseId,
-    `/discussions/forums/${forumId}/topics/${topicId}/posts/`
-  );
-  const posts = await apiClient.get<D2LPost[]>(postsPath, {
-    ttl: DEFAULT_CACHE_TTLS.announcements,
-  });
-
-  log(
-    "INFO",
-    `get_discussions: Retrieved ${posts.length} posts for topic ${topicId} in forum ${forumId}`
-  );
+  log("INFO", `get_discussions: Retrieved ${posts.length} posts for topic ${topicId} in forum ${forumId}`);
 
   return toolResponse({
     courseId,
@@ -305,9 +242,9 @@ async function getTopicPosts(
 }
 
 /**
- * Format posts into a clean thread structure.
+ * Format posts into a clean thread structure, oldest first, deleted posts dropped.
  */
-function formatPosts(posts: D2LPost[]): any[] {
+function formatPosts(posts: D2LPost[]) {
   return posts
     .filter((p) => !p.IsDeleted)
     .map((p) => ({
@@ -326,8 +263,5 @@ function formatPosts(posts: D2LPost[]): any[] {
       attachmentCount: p.AttachmentCount,
       isRead: p.IsRead,
     }))
-    .sort(
-      (a, b) =>
-        new Date(a.datePosted).getTime() - new Date(b.datePosted).getTime()
-    );
+    .sort((a, b) => new Date(a.datePosted).getTime() - new Date(b.datePosted).getTime());
 }
