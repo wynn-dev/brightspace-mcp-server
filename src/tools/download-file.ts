@@ -4,114 +4,68 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { D2LApiClient } from "../api/index.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { D2LApiClient } from "../api/index.js";
 import { DownloadFileSchema } from "./schemas.js";
-import { toolResponse, sanitizeError, errorResponse } from "./tool-helpers.js";
+import { defineTool } from "./define-tool.js";
+import { toolResponse, errorResponse } from "./tool-helpers.js";
 import { log } from "../utils/logger.js";
-import {
-  validateDownloadPath,
-  validateFileType,
-  validateContentId,
-  MAX_FILE_SIZE,
-} from "../utils/file-validator.js";
+import { isErrnoException } from "../utils/errors.js";
+import { validateContentId, MAX_FILE_SIZE } from "../utils/file-validator.js";
 import { secureDownload } from "../utils/download-helpers.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-/**
- * Register download_file tool
- */
-export function registerDownloadFile(
-  server: McpServer,
-  apiClient: D2LApiClient
-): void {
-  server.registerTool(
-    "download_file",
-    {
-      title: "Download File",
-      description:
-        "Download a file from course content or assignment submissions to a local directory. Use this when the user wants to download, save, or get a file from Brightspace course content or dropbox submissions. IMPORTANT: You MUST ask the user where they want to save the file before calling this tool. Never guess or assume a download directory. After identifying the file to download, suggest a clean readable filename to the user (e.g., 'Lecture 7 - Memory Management.pdf' instead of 'L07_CS251_2026SP_v2.pdf') and ask if they'd like to rename it. Pass their preferred name as customFilename, or omit it to keep the original.",
-      inputSchema: DownloadFileSchema,
-      // Reads from Brightspace but writes the file to the local disk
-      annotations: { readOnlyHint: false, destructiveHint: false },
-    },
-    async (args: any) => {
-      try {
-        log("DEBUG", "download_file tool called", { args });
+export const registerDownloadFile = defineTool(
+  {
+    name: "download_file",
+    title: "Download File",
+    description:
+      "Download a file from course content or assignment submissions to a local directory. Use this when the user wants to download, save, or get a file from Brightspace course content or dropbox submissions. IMPORTANT: You MUST ask the user where they want to save the file before calling this tool. Never guess or assume a download directory. After identifying the file to download, suggest a clean readable filename to the user (e.g., 'Lecture 7 - Memory Management.pdf' instead of 'L07_CS251_2026SP_v2.pdf') and ask if they'd like to rename it. Pass their preferred name as customFilename, or omit it to keep the original.",
+    schema: DownloadFileSchema,
+    // Reads from Brightspace but writes the file to the local disk
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  async ({ courseId, topicId, folderId, fileId, downloadPath, customFilename }, { apiClient }) => {
+    validateContentId(courseId);
 
-        // Parse and validate input
-        const { courseId, topicId, folderId, fileId, downloadPath, customFilename } =
-          DownloadFileSchema.parse(args);
-
-        // Validate courseId
-        validateContentId(courseId);
-
-        // Validate download path is absolute
-        if (!path.isAbsolute(downloadPath)) {
-          return errorResponse(
-            "Download path must be an absolute path (e.g., /Users/username/Downloads on Mac or C:\\Users\\username\\Downloads on Windows)"
-          );
-        }
-
-        // Validate download directory exists and is a directory
-        try {
-          const stats = await fs.stat(downloadPath);
-          if (!stats.isDirectory()) {
-            return errorResponse(
-              `Download path is not a directory: ${downloadPath}`
-            );
-          }
-        } catch (error: any) {
-          if (error?.code === "ENOENT") {
-            return errorResponse(
-              `Download directory does not exist: ${downloadPath}`
-            );
-          }
-          throw error;
-        }
-
-        // Determine download source
-        if (topicId !== undefined) {
-          // Content file download
-          validateContentId(topicId);
-          return await downloadContentFile(
-            apiClient,
-            courseId,
-            topicId,
-            downloadPath,
-            customFilename
-          );
-        } else if (folderId !== undefined && fileId !== undefined) {
-          // Submission file download
-          validateContentId(folderId);
-          validateContentId(fileId);
-          return await downloadSubmissionFile(
-            apiClient,
-            courseId,
-            folderId,
-            fileId,
-            downloadPath,
-            customFilename
-          );
-        } else {
-          return errorResponse(
-            "Either topicId (for content files) or both folderId and fileId (for submission files) must be provided"
-          );
-        }
-      } catch (error) {
-        return sanitizeError(error);
-      }
+    if (!path.isAbsolute(downloadPath)) {
+      return errorResponse(
+        "Download path must be an absolute path (e.g., /Users/username/Downloads on Mac or C:\\Users\\username\\Downloads on Windows)"
+      );
     }
-  );
-}
+
+    try {
+      const stats = await fs.stat(downloadPath);
+      if (!stats.isDirectory()) {
+        return errorResponse(`Download path is not a directory: ${downloadPath}`);
+      }
+    } catch (error) {
+      if (isErrnoException(error, "ENOENT")) {
+        return errorResponse(`Download directory does not exist: ${downloadPath}`);
+      }
+      throw error;
+    }
+
+    if (topicId !== undefined) {
+      validateContentId(topicId);
+      return downloadContentFile(apiClient, courseId, topicId, downloadPath, customFilename);
+    }
+    if (folderId !== undefined && fileId !== undefined) {
+      validateContentId(folderId);
+      validateContentId(fileId);
+      return downloadSubmissionFile(apiClient, courseId, folderId, fileId, downloadPath, customFilename);
+    }
+    return errorResponse(
+      "Either topicId (for content files) or both folderId and fileId (for submission files) must be provided"
+    );
+  }
+);
 
 /**
  * Extract a filename from a Content-Disposition header.
  */
-export function parseContentDispositionFilename(
-  disposition: string
-): string | null {
+function parseContentDispositionFilename(disposition: string): string | null {
   const extended = disposition.match(/filename\*\s*=\s*([^;]+)/i);
   if (extended?.[1]) {
     const value = extended[1].trim();
@@ -133,6 +87,33 @@ export function parseContentDispositionFilename(
   return null;
 }
 
+function tooLarge(bytes: number): CallToolResult {
+  return errorResponse(
+    `File too large (${Math.round(bytes / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
+  );
+}
+
+async function saveAndRespond(
+  downloadPath: string,
+  filename: string,
+  buffer: Buffer,
+  logLabel: string
+): Promise<CallToolResult> {
+  // secureDownload handles path traversal, file type validation, and name conflicts
+  const result = await secureDownload({ targetDir: downloadPath, filename, data: buffer });
+
+  log("INFO", `${logLabel} downloaded successfully: ${result.path} (${result.size} bytes, ${result.mime})`);
+
+  return toolResponse({
+    success: true,
+    filePath: result.path,
+    fileSize: result.size,
+    mimeType: result.mime,
+    originalFilename: filename,
+    message: `File downloaded successfully to ${result.path}`,
+  });
+}
+
 /**
  * Download a content file using topicId
  */
@@ -142,69 +123,26 @@ async function downloadContentFile(
   topicId: number,
   downloadPath: string,
   customFilename?: string
-): Promise<any> {
-  log(
-    "INFO",
-    `Downloading content file: courseId=${courseId}, topicId=${topicId}`
+): Promise<CallToolResult> {
+  log("INFO", `Downloading content file: courseId=${courseId}, topicId=${topicId}`);
+
+  const response = await apiClient.getRaw(
+    apiClient.le(courseId, `/content/topics/${topicId}/file`)
   );
-
-  // Build download URL using D2L API path helper
-  const apiPath = apiClient.le(courseId, `/content/topics/${topicId}/file`);
-
-  // Fetch file using getRaw (returns Response object, not parsed JSON)
-  const response = await apiClient.getRaw(apiPath);
 
   // Check Content-Length BEFORE downloading body (prevent memory exhaustion)
-  const contentLength = parseInt(
-    response.headers.get("Content-Length") ?? "0",
-    10
-  );
-  if (contentLength > MAX_FILE_SIZE) {
-    return errorResponse(
-      `File too large (${Math.round(contentLength / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
-    );
-  }
+  const contentLength = parseInt(response.headers.get("Content-Length") ?? "0", 10);
+  if (contentLength > MAX_FILE_SIZE) return tooLarge(contentLength);
 
-  // Get filename from Content-Disposition header
   const disposition = response.headers.get("Content-Disposition") ?? "";
-  const filename = parseContentDispositionFilename(disposition) ?? "download";
+  const originalFilename = parseContentDispositionFilename(disposition) ?? "download";
+  log("DEBUG", `Content-Disposition filename: ${originalFilename}`);
 
-  log("DEBUG", `Content-Disposition filename: ${filename}`);
-
-  // Download body as buffer
   const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > MAX_FILE_SIZE) return tooLarge(buffer.length);
 
-  // Double-check actual size
-  if (buffer.length > MAX_FILE_SIZE) {
-    return errorResponse(
-      `File too large (${Math.round(buffer.length / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
-    );
-  }
-
-  // Use custom filename if provided, otherwise use Content-Disposition filename
-  const originalFilename = filename;
-  const effectiveFilename = customFilename || filename;
-
-  // Use secureDownload for path traversal prevention, file type validation, and conflict resolution
-  const result = await secureDownload({
-    targetDir: downloadPath,
-    filename: effectiveFilename,
-    data: buffer,
-  });
-
-  log(
-    "INFO",
-    `File downloaded successfully: ${result.path} (${result.size} bytes, ${result.mime})`
-  );
-
-  return toolResponse({
-    success: true,
-    filePath: result.path,
-    fileSize: result.size,
-    mimeType: result.mime,
-    originalFilename,
-    message: `File downloaded successfully to ${result.path}`,
-  });
+  const result = await saveAndRespond(downloadPath, customFilename || originalFilename, buffer, "File");
+  return withOriginalFilename(result, originalFilename);
 }
 
 /**
@@ -217,99 +155,45 @@ async function downloadSubmissionFile(
   fileId: number,
   downloadPath: string,
   customFilename?: string
-): Promise<any> {
-  log(
-    "INFO",
-    `Downloading submission file: courseId=${courseId}, folderId=${folderId}, fileId=${fileId}`
-  );
-
-  // D2L API pattern for submission file downloads:
-  // GET /d2l/api/le/(version)/(orgUnitId)/dropbox/folders/(folderId)/submissions/mysubmissions/
-  // Then find the file by fileId and construct its download URL
-
-  // First, fetch the submission to get file metadata
-  const submissionsPath = apiClient.le(
-    courseId,
-    `/dropbox/folders/${folderId}/submissions/mysubmissions/`
-  );
+): Promise<CallToolResult> {
+  log("INFO", `Downloading submission file: courseId=${courseId}, folderId=${folderId}, fileId=${fileId}`);
 
   interface DropboxSubmission {
     Id: number;
-    Files: Array<{
-      FileId: number;
-      FileName: string;
-      Size: number;
-    }>;
+    Files: Array<{ FileId: number; FileName: string; Size: number }>;
   }
 
-  const submissions =
-    await apiClient.get<DropboxSubmission[]>(submissionsPath);
+  // Look the file up in the user's submission to learn its name and size
+  const submissions = await apiClient.get<DropboxSubmission[]>(
+    apiClient.le(courseId, `/dropbox/folders/${folderId}/submissions/mysubmissions/`)
+  );
 
   if (!submissions || submissions.length === 0) {
-    return errorResponse(
-      "No submissions found for this assignment. Upload a submission first."
-    );
+    return errorResponse("No submissions found for this assignment. Upload a submission first.");
   }
 
-  // Find the file in the submission
   const submission = submissions[0];
   const file = submission.Files.find((f) => f.FileId === fileId);
-
   if (!file) {
     return errorResponse(
       `File ID ${fileId} not found in submission. Available files: ${submission.Files.map((f) => `${f.FileName} (ID: ${f.FileId})`).join(", ")}`
     );
   }
+  if (file.Size > MAX_FILE_SIZE) return tooLarge(file.Size);
 
-  // Check file size before downloading
-  if (file.Size > MAX_FILE_SIZE) {
-    return errorResponse(
-      `File too large (${Math.round(file.Size / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
-    );
-  }
-
-  // D2L file download URL pattern for submission files
-  // GET /d2l/api/le/(version)/(orgUnitId)/dropbox/folders/(folderId)/submissions/(submissionId)/files/(fileId)/download
-  const downloadApiPath = apiClient.le(
-    courseId,
-    `/dropbox/folders/${folderId}/submissions/${submission.Id}/files/${fileId}/download`
+  const response = await apiClient.getRaw(
+    apiClient.le(courseId, `/dropbox/folders/${folderId}/submissions/${submission.Id}/files/${fileId}/download`)
   );
 
-  // Fetch file
-  const response = await apiClient.getRaw(downloadApiPath);
-
-  // Download body as buffer
   const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > MAX_FILE_SIZE) return tooLarge(buffer.length);
 
-  // Double-check actual size
-  if (buffer.length > MAX_FILE_SIZE) {
-    return errorResponse(
-      `File too large (${Math.round(buffer.length / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
-    );
-  }
+  const result = await saveAndRespond(downloadPath, customFilename || file.FileName, buffer, "Submission file");
+  return withOriginalFilename(result, file.FileName);
+}
 
-  // Use custom filename if provided, otherwise use original submission filename
-  const originalFilename = file.FileName;
-  const effectiveFilename = customFilename || file.FileName;
-
-  // Use secureDownload for path traversal prevention, file type validation, and conflict resolution
-  const result = await secureDownload({
-    targetDir: downloadPath,
-    filename: effectiveFilename,
-    data: buffer,
-  });
-
-  log(
-    "INFO",
-    `Submission file downloaded successfully: ${result.path} (${result.size} bytes, ${result.mime})`
-  );
-
-  return toolResponse({
-    success: true,
-    filePath: result.path,
-    fileSize: result.size,
-    mimeType: result.mime,
-    originalFilename,
-    message: `File downloaded successfully to ${result.path}`,
-  });
+/** The response reports the Brightspace filename even when customFilename was used. */
+function withOriginalFilename(result: CallToolResult, originalFilename: string): CallToolResult {
+  const payload = JSON.parse((result.content[0] as { text: string }).text);
+  return toolResponse({ ...payload, originalFilename });
 }

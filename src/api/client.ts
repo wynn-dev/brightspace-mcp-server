@@ -4,8 +4,7 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import type { D2LApiClientOptions, ApiVersions, CacheTTLs, TokenData } from "./types.js";
-import { DEFAULT_CACHE_TTLS } from "./types.js";
+import type { D2LApiClientOptions, ApiVersions, TokenData } from "./types.js";
 import { TTLCache } from "./cache.js";
 import { TokenBucket } from "./rate-limiter.js";
 import { discoverVersions } from "./version-discovery.js";
@@ -17,7 +16,6 @@ import { log } from "../utils/logger.js";
  *
  * Key features:
  * - Auto-discovers LP/LE versions from /d2l/api/versions/
- * - Supports both Bearer tokens and cookie-based auth (auto-detected via "cookie:" prefix)
  * - Client-side rate limiting using token bucket algorithm
  * - In-memory response caching with per-data-type TTLs
  * - 401 retry logic: retry once with fresh token, then clear and throw
@@ -30,7 +28,6 @@ export class D2LApiClient {
   private readonly tokenManager: D2LApiClientOptions["tokenManager"];
   private readonly cache: TTLCache;
   private readonly rateLimiter: TokenBucket;
-  private readonly cacheTTLs: CacheTTLs;
   private readonly timeoutMs: number;
   private readonly onAuthExpired?: () => Promise<boolean>;
   private versions: ApiVersions | null = null;
@@ -49,8 +46,6 @@ export class D2LApiClient {
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.onAuthExpired = options.onAuthExpired;
 
-    // Merge user-provided TTLs with defaults
-    this.cacheTTLs = { ...DEFAULT_CACHE_TTLS, ...options.cacheTTLs };
 
     // Initialize cache and rate limiter
     this.cache = new TTLCache();
@@ -377,28 +372,12 @@ export class D2LApiClient {
     }
   }
 
-  /**
-   * Build authentication headers for a request.
-   * Supports both Bearer tokens and cookie-based auth.
-   */
   private buildAuthHeaders(token: TokenData): Record<string, string> {
-    const headers: Record<string, string> = {
+    return {
       "User-Agent":
         "BrightspaceMCP/1.0 (Rohan Muppa; github.com/rohanmuppa/brightspace-mcp-server)",
+      Authorization: `Bearer ${token.accessToken}`,
     };
-
-    // Auto-detect cookie vs Bearer auth based on "cookie:" prefix
-    if (token.accessToken.startsWith("cookie:")) {
-      // Cookie-based auth: strip prefix and set Cookie header
-      headers["Cookie"] = token.accessToken.substring(7);
-      log("DEBUG", "Using cookie-based authentication");
-    } else {
-      // Bearer token auth
-      headers["Authorization"] = `Bearer ${token.accessToken}`;
-      log("DEBUG", "Using Bearer token authentication");
-    }
-
-    return headers;
   }
 
   /**

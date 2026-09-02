@@ -36,7 +36,7 @@ export const PKG_VERSION = (() => {
   }
 })();
 
-export interface McpServerDeps {
+interface McpServerDeps {
   apiClient: D2LApiClient;
   tokenManager: Pick<TokenManager, "getToken">;
   authRunner: Pick<AuthRunner, "run">;
@@ -135,12 +135,12 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   registerGetMyGrades(server, apiClient, config);
   registerGetAnnouncements(server, apiClient, config);
   registerGetAssignments(server, apiClient, config);
-  registerGetCourseContent(server, apiClient);
-  if (includeDownloadFile) registerDownloadFile(server, apiClient);
-  registerGetClasslistEmails(server, apiClient);
-  registerGetRoster(server, apiClient);
-  registerGetSyllabus(server, apiClient);
-  registerGetDiscussions(server, apiClient);
+  registerGetCourseContent(server, apiClient, config);
+  if (includeDownloadFile) registerDownloadFile(server, apiClient, config);
+  registerGetClasslistEmails(server, apiClient, config);
+  registerGetRoster(server, apiClient, config);
+  registerGetSyllabus(server, apiClient, config);
+  registerGetDiscussions(server, apiClient, config);
 
   log("DEBUG", `MCP tools registered (${includeDownloadFile ? 12 : 11} including check_auth)`);
   return server;

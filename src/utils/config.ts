@@ -6,10 +6,23 @@
 
 import * as path from "node:path";
 import * as os from "node:os";
-import type { AppConfig } from "../types/index.js";
+import type { AppConfig, LogLevel } from "../types/index.js";
 import { configStoreExists, loadConfigStore } from "./config-store.js";
+import { setLogLevel } from "./logger.js";
+
+const LOG_LEVELS: LogLevel[] = ["DEBUG", "INFO", "WARN", "ERROR"];
 
 export function loadConfig(): AppConfig {
+  // Apply the log level first so the config loading below can itself be traced
+  const requestedLevel = process.env.D2L_LOG_LEVEL?.toUpperCase();
+  if (requestedLevel) {
+    if (LOG_LEVELS.includes(requestedLevel as LogLevel)) {
+      setLogLevel(requestedLevel as LogLevel);
+    } else {
+      console.error(`[config] Ignoring invalid D2L_LOG_LEVEL "${process.env.D2L_LOG_LEVEL}" (use ${LOG_LEVELS.join(", ")})`);
+    }
+  }
+
   const store = configStoreExists() ? loadConfigStore() : null;
 
   if (store) {

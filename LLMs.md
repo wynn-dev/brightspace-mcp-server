@@ -16,13 +16,13 @@ It is run from a git clone — nothing is published to npm. Every user-facing ac
 
 Follow these steps in order. Stop and report back if any step fails.
 
-### 1. Verify Node.js 18+
+### 1. Verify Node.js 22+
 
 ```bash
 node --version
 ```
 
-If Node is missing or below v18, tell the user to install the LTS from https://nodejs.org/ and stop.
+If Node is missing or below v22, tell the user to install the LTS from https://nodejs.org/ and stop.
 
 ### 2. Clone and install
 

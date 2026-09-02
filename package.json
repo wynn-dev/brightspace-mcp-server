@@ -26,25 +26,24 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
-    "ajv": "^8.18.0",
-    "dotenv": "^17.2.4",
-    "file-type": "^21.3.0",
-    "playwright": "^1.58.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dotenv": "^17.4.2",
+    "file-type": "^22.0.2",
+    "playwright": "^1.62.1",
     "sanitize-filename": "^1.6.3",
-    "turndown": "^7.2.2",
-    "unpdf": "^1.4.0",
-    "zod": "^4.0.0"
+    "turndown": "^7.2.4",
+    "unpdf": "^1.8.1",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^22.20.1",
     "@types/sanitize-filename": "^1.1.28",
     "@types/turndown": "^5.0.6",
-    "typescript": "^5.9.0",
-    "vitest": "^4.0.0"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "license": "MIT",
   "author": "Rohan Muppa",

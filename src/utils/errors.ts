@@ -14,13 +14,6 @@ export class AuthError extends Error {
   }
 }
 
-export class TokenExpiredError extends AuthError {
-  constructor(public readonly expiredAt: number) {
-    super(`[PBMCP-1002] Token expired at ${new Date(expiredAt).toISOString()}`);
-    this.name = "TokenExpiredError";
-  }
-}
-
 export class BrowserAuthError extends AuthError {
   constructor(
     message: string,
@@ -30,6 +23,14 @@ export class BrowserAuthError extends AuthError {
     super(`[PBMCP-1003] Browser auth failed at step "${step}": ${message}`, cause);
     this.name = "BrowserAuthError";
   }
+}
+
+/** True if `error` is a Node system error, optionally with the given code (e.g. "ENOENT"). */
+export function isErrnoException(error: unknown, code?: string): error is NodeJS.ErrnoException {
+  return (
+    error instanceof Error &&
+    (code === undefined || (error as NodeJS.ErrnoException).code === code)
+  );
 }
 
 export class SessionStoreError extends AuthError {

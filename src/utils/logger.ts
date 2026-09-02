@@ -29,11 +29,6 @@ function redact(value: string): string {
     /Bearer\s+([A-Za-z0-9._~+/=-]{8})[A-Za-z0-9._~+/=-]*/g,
     "Bearer $1...REDACTED"
   );
-  // Redact cookie: prefixed tokens
-  value = value.replace(
-    /cookie:([^\s]{8})[^\s]*/g,
-    "cookie:$1...REDACTED"
-  );
   // Redact anything that looks like a long token (40+ chars of base64-like)
   value = value.replace(
     /([A-Za-z0-9._~+/=-]{40,})/g,

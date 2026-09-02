@@ -20,18 +20,13 @@ export class ApiError extends AuthError {
   }
 }
 
-// Generic HTTP error (non-401/429) - semantic alias for ApiError
-export class HttpError extends ApiError {
-  constructor(
-    status: number,
-    endpoint: string,
-    message: string,
-    responseBody?: string,
-    cause?: Error,
-  ) {
-    super(status, endpoint, message, responseBody, cause);
-    this.name = "HttpError";
-  }
+export function isApiError(error: unknown, status?: number): error is ApiError {
+  return error instanceof ApiError && (status === undefined || error.status === status);
+}
+
+/** True if `error` is an ApiError with one of the given HTTP statuses. */
+export function isApiStatus(error: unknown, ...statuses: number[]): error is ApiError {
+  return error instanceof ApiError && statuses.includes(error.status);
 }
 
 // Rate limit error (429 Too Many Requests)

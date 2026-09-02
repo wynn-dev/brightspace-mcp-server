@@ -9,7 +9,7 @@ export interface TokenData {
   accessToken: string;
   capturedAt: number; // Unix timestamp ms
   expiresAt: number; // Unix timestamp ms
-  source: "browser" | "cache";
+  source: "browser";
 }
 
 // Encrypted token stored on disk
@@ -36,17 +36,6 @@ export interface AppConfig {
   username?: string;
   password?: string;
   courseFilter: CourseFilterConfig;
-}
-
-// Auth result from browser auth flow
-export interface AuthResult {
-  token: TokenData;
-  cookies?: Array<{
-    name: string;
-    value: string;
-    domain: string;
-    path: string;
-  }>;
 }
 
 // Log levels
