@@ -7,40 +7,13 @@
  * https://github.com/rohanmuppa/brightspace-mcp-server
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { enableStdoutGuard, log } from "./utils/logger.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
 import { D2LApiClient } from "./api/index.js";
-import { initUpdateChecker, getUpdateNotice } from "./utils/update-checker.js";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import {
-  registerGetMyCourses,
-  registerGetUpcomingDueDates,
-  registerGetMyGrades,
-  registerGetAnnouncements,
-  registerGetAssignments,
-  registerGetCourseContent,
-  registerDownloadFile,
-  registerGetClasslistEmails,
-  registerGetRoster,
-  registerGetSyllabus,
-  registerGetDiscussions,
-} from "./tools/index.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PKG_VERSION = (() => {
-  try {
-    const pkg = JSON.parse(readFileSync(resolve(__dirname, "..", "package.json"), "utf-8"));
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+import { initUpdateChecker } from "./utils/update-checker.js";
+import { createMcpServer, PKG_VERSION } from "./server.js";
 
 // ── Subcommand routing (before any MCP initialization) ──────────────
 const subcommand = process.argv[2];
@@ -49,6 +22,8 @@ if (subcommand === 'setup') {
   await import('./setup.js');
 } else if (subcommand === 'auth') {
   await import('./auth-cli.js');
+} else if (subcommand === 'http') {
+  await import('./http-server.js');
 } else {
   // ── MCP Server (default) ────────────────────────────────────────────
 
@@ -66,12 +41,6 @@ if (subcommand === 'setup') {
       const config = loadConfig();
       log("DEBUG", "Configuration loaded", { sessionDir: config.sessionDir });
 
-      // Create MCP server instance
-      const server = new McpServer({
-        name: "brightspace",
-        version: PKG_VERSION,
-        description: "Brightspace MCP Server — by Rohan Muppa (github.com/rohanmuppa/brightspace-mcp-server)",
-      });
       log("INFO", "");
       log("INFO", "========================================");
       log("INFO", `  Brightspace MCP Server v${PKG_VERSION}`);
@@ -106,66 +75,6 @@ if (subcommand === 'setup') {
       // Start background update check (fire and forget)
       initUpdateChecker();
 
-      // Register check_auth tool (no input schema needed for zero-argument tool)
-      server.registerTool(
-        "check_auth",
-        {
-          title: "Check Authentication Status",
-          description:
-            "Check if you are authenticated with Brightspace. " +
-            "Run the brightspace-auth CLI first to authenticate. " +
-            "Use this when the user asks if they're logged in, if authentication is working, " +
-            "or when other tools return auth errors.",
-        },
-        async () => {
-          log("DEBUG", "check_auth tool called");
-
-          let token = await tokenManager.getToken();
-
-          if (!token) {
-            log("INFO", "check_auth: No valid token, attempting auto-reauthentication...");
-
-            const success = await authRunner.run();
-            if (success) {
-              token = await tokenManager.getToken();
-            }
-
-            if (!token) {
-              log("INFO", "check_auth: Auto-reauthentication failed or produced no valid token");
-
-              const content: Array<{ type: "text"; text: string }> = [
-                {
-                  type: "text",
-                  text: "Not authenticated. Auto-reauthentication was attempted but failed. " +
-                    "Please run `brightspace-auth` manually in your terminal to log in. " +
-                    "Make sure your credentials in .env are correct and your internet connection is stable.",
-                },
-              ];
-              const notice = getUpdateNotice();
-              if (notice) content.push({ type: "text", text: notice });
-              return { content };
-            }
-
-            log("INFO", "check_auth: Auto-reauthentication succeeded");
-          }
-
-          const expiresIn = Math.round((token.expiresAt - Date.now()) / 1000 / 60);
-          log("INFO", `check_auth: Token valid, expires in ~${expiresIn} minutes`);
-
-          const content: Array<{ type: "text"; text: string }> = [
-            {
-              type: "text",
-              text: `Authenticated with Brightspace. Token expires in ~${expiresIn} minutes. Source: ${token.source}.`,
-            },
-          ];
-          const notice = getUpdateNotice();
-          if (notice) content.push({ type: "text", text: notice });
-          return { content };
-        }
-      );
-
-      log("DEBUG", "check_auth tool registered");
-
       // Log active course filter config if any filter is set
       if (config.courseFilter.includeCourseIds || config.courseFilter.excludeCourseIds || !config.courseFilter.activeOnly) {
         log("DEBUG", "Course filter config", {
@@ -175,19 +84,7 @@ if (subcommand === 'setup') {
         });
       }
 
-      // Register MCP tools
-      registerGetMyCourses(server, apiClient, config);
-      registerGetUpcomingDueDates(server, apiClient, config);
-      registerGetMyGrades(server, apiClient, config);
-      registerGetAnnouncements(server, apiClient, config);
-      registerGetAssignments(server, apiClient, config);
-      registerGetCourseContent(server, apiClient);
-      registerDownloadFile(server, apiClient);
-      registerGetClasslistEmails(server, apiClient);
-      registerGetRoster(server, apiClient);
-      registerGetSyllabus(server, apiClient);
-      registerGetDiscussions(server, apiClient);
-      log("DEBUG", "MCP tools registered (11 core tools, total 12 with check_auth)");
+      const server = createMcpServer({ apiClient, tokenManager, authRunner, config });
 
       // Connect stdio transport
       const transport = new StdioServerTransport();

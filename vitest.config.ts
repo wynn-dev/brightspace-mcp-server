@@ -8,7 +8,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/auth-cli.ts", "src/index.ts"],
+      exclude: ["src/auth-cli.ts", "src/index.ts", "src/http-server.ts"],
     },
   },
 });

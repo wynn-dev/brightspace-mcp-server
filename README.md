@@ -66,6 +66,40 @@ You still need to run `npx brightspace-mcp-server setup` first to save your cred
 
 </details>
 
+## Remote Access (Streamable HTTP)
+
+Want to reach Brightspace from an MCP client on another machine? Run the server over MCP's Streamable HTTP transport instead of stdio:
+
+```bash
+MCP_AUTH_TOKEN="$(openssl rand -hex 32)" MCP_HTTP_HOST=0.0.0.0 npx brightspace-mcp-server http
+```
+
+It listens on `http://<host>:8787/mcp` and serves the 11 read-only tools (everything except `download_file`, which would write to the server's disk rather than yours). Clients authenticate with `Authorization: Bearer <MCP_AUTH_TOKEN>`:
+
+```bash
+# Claude Code
+claude mcp add --transport http brightspace http://your-host:8787/mcp --header "Authorization: Bearer <token>"
+```
+
+```json
+// Generic client config
+{ "mcpServers": { "brightspace": { "url": "http://your-host:8787/mcp", "headers": { "Authorization": "Bearer <token>" } } } }
+```
+
+| Variable | Default | Notes |
+|---|---|---|
+| `MCP_HTTP_HOST` | `127.0.0.1` | Bind address. Anything other than loopback **requires** `MCP_AUTH_TOKEN`. |
+| `MCP_HTTP_PORT` | `8787` | |
+| `MCP_AUTH_TOKEN` | — | Static bearer token. The server holds your whole Brightspace session, so always set one unless you're on loopback. |
+| `MCP_ALLOWED_HOSTS` | loopback names | Comma-separated `host:port` values accepted in the `Host` header (DNS-rebinding protection). Set this to the name clients use, e.g. `myserver.lan:8787`. |
+| `MCP_ALLOWED_ORIGINS` | — | Comma-separated browser origins to accept, if any. |
+
+Notes for a headless host:
+
+- Run `npx brightspace-mcp-server setup` on that host first so it has your credentials; set `"headless": true` in `~/.brightspace-mcp/config.json` (or `D2L_HEADLESS=true`) so hourly re-login runs without a display. This works unattended only for schools without an MFA prompt (e.g. TU Delft).
+- On Linux, install Chromium's system dependencies once: `npx playwright install-deps chromium`.
+- There is no TLS; put it behind your VPN/Tailscale or a reverse proxy that terminates HTTPS if it leaves your LAN.
+
 ## Session Expired?
 
 Sessions re-authenticate automatically. If auto-reauth fails (e.g., you missed the Duo push):

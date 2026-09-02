@@ -54,6 +54,7 @@ export function registerGetUpcomingDueDates(
       description:
         "Fetch upcoming due dates across all your courses. Shows assignments, quizzes, and other items due within the specified time window. Use this when the user asks about deadlines, what's due, upcoming work, or what they need to do this week.",
       inputSchema: GetUpcomingDueDatesSchema,
+      annotations: { readOnlyHint: true },
     },
     async (args: any) => {
       try {
