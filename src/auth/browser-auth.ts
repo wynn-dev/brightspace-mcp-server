@@ -5,7 +5,7 @@
  */
 
 import { chromium } from "playwright";
-import type { BrowserContext, Page } from "playwright";
+import type { BrowserContext, Page, Request } from "playwright";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -14,7 +14,13 @@ import { BrowserAuthError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
 import { PurdueSSOFlow } from "./purdue-sso.js";
 import { TUDelftSSOFlow } from "./tudelft-sso.js";
+import { CredentialsRejectedError } from "./sso-flow.js";
 import type { SSOFlow } from "./sso-flow.js";
+
+interface TokenInterception {
+  promise: Promise<string>;
+  cancel: () => void;
+}
 
 export class BrowserAuth {
   private config: AppConfig;
@@ -29,6 +35,11 @@ export class BrowserAuth {
     this.ssoFlow = TUDelftSSOFlow.matches(config.baseUrl)
       ? new TUDelftSSOFlow(credentials)
       : new PurdueSSOFlow(credentials);
+  }
+
+  /** Institution-specific instruction shown to the user before login starts. */
+  get loginHint(): string {
+    return this.ssoFlow.loginHint;
   }
 
   /**
@@ -169,6 +180,7 @@ export class BrowserAuth {
 
   async authenticate(): Promise<TokenData> {
     let context: BrowserContext | null = null;
+    const interceptions: TokenInterception[] = [];
 
     try {
       log("INFO", "Starting browser authentication");
@@ -231,7 +243,8 @@ export class BrowserAuth {
       // CRITICAL: Set up token interception BEFORE navigation
       // Use longer timeout for manual login (5 min) vs automated SSO (2 min)
       const interceptTimeout = this.ssoFlow.hasCredentials() ? 120000 : 300000;
-      const tokenPromise = this.setupTokenInterception(page, interceptTimeout);
+      const tokenInterception = this.setupTokenInterception(page, interceptTimeout);
+      interceptions.push(tokenInterception);
 
       // Navigate and login if needed
       const alreadyAuthenticated = await this.navigateAndLogin(page);
@@ -258,7 +271,8 @@ export class BrowserAuth {
         await context.clearCookies();
         await page.close();
         const freshPage = await context.newPage();
-        const freshTokenPromise = this.setupTokenInterception(freshPage);
+        const freshInterception = this.setupTokenInterception(freshPage);
+        interceptions.push(freshInterception);
         await this.navigateAndLogin(freshPage);
 
         const freshExtracted = await this.tryExtractToken(freshPage, context);
@@ -268,7 +282,7 @@ export class BrowserAuth {
           return freshExtracted;
         }
 
-        const accessToken = await freshTokenPromise;
+        const accessToken = await freshInterception.promise;
         log("INFO", "Bearer token captured after forced re-login");
         const now = Date.now();
         const tokenData: TokenData = {
@@ -284,7 +298,7 @@ export class BrowserAuth {
       // Fresh-login final fallback: wait on the passive listener.
       // Rarely reached in practice — tryExtractToken typically hits localStorage first.
       log("INFO", "Waiting for Bearer token from network interception");
-      const accessToken = await tokenPromise;
+      const accessToken = await tokenInterception.promise;
       log("INFO", "Bearer token captured successfully");
 
       const now = Date.now();
@@ -299,8 +313,13 @@ export class BrowserAuth {
       log("INFO", "Authentication complete");
       return tokenData;
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
       log("ERROR", "Browser authentication failed", error);
+
+      // The IdP rejected the stored credentials — surface that verbatim
+      // instead of burying it under a generic "Authentication failed".
+      if (error instanceof CredentialsRejectedError) throw error;
+
+      const errMsg = error instanceof Error ? error.message : String(error);
 
       // Provide platform-specific troubleshooting hints
       let hint = "";
@@ -323,6 +342,7 @@ export class BrowserAuth {
         error as Error
       );
     } finally {
+      for (const interception of interceptions) interception.cancel();
       if (context) {
         log("DEBUG", "Closing browser context");
         try {
@@ -440,10 +460,18 @@ export class BrowserAuth {
   /**
    * Set up passive network request listener to capture Bearer token.
    * MUST be called BEFORE page.goto() to avoid race condition.
+   *
+   * The returned promise is pre-handled: if its timer fires while the caller
+   * is still busy with a long login, the rejection is not "unhandled" (which
+   * would kill the process); awaiting it later still throws. cancel() stops
+   * the timer and listener once a token was obtained some other way.
    */
-  private setupTokenInterception(page: Page, timeoutMs = 120000): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+  private setupTokenInterception(page: Page, timeoutMs = 120000): TokenInterception {
+    let timeout: NodeJS.Timeout | undefined;
+    let onRequest: ((request: Request) => void) | undefined;
+
+    const promise = new Promise<string>((resolve, reject) => {
+      timeout = setTimeout(() => {
         reject(
           new BrowserAuthError(
             `Token interception timed out after ${timeoutMs / 1000} seconds`,
@@ -452,7 +480,7 @@ export class BrowserAuth {
         );
       }, timeoutMs);
 
-      page.on("request", (request) => {
+      onRequest = (request) => {
         const url = request.url();
 
         // Look for any request with a Bearer token
@@ -466,10 +494,26 @@ export class BrowserAuth {
             resolve(token);
           }
         }
-      });
+      };
+      page.on("request", onRequest);
 
       log("DEBUG", "Token interception listener registered");
     });
+    promise.catch(() => {});
+
+    return {
+      promise,
+      cancel: () => {
+        clearTimeout(timeout);
+        if (onRequest) {
+          try {
+            page.off("request", onRequest);
+          } catch {
+            // Page already closed
+          }
+        }
+      },
+    };
   }
 
   /**
@@ -483,86 +527,72 @@ export class BrowserAuth {
         waitUntil: "domcontentloaded",
         timeout: 30000,
       });
+      log("DEBUG", `Current URL after navigation: ${page.url()}`);
 
-      let currentUrl = page.url();
-      log("DEBUG", `Current URL after navigation: ${currentUrl}`);
+      // Ask D2L directly whether the browser's cookies carry a live session
+      // rather than inferring it from the URL, which lies in both directions:
+      // some tenants (USC) bounce a valid session through SAML hops before
+      // landing on /d2l/home, others (TU Delft) serve anonymous /d2l/home as
+      // an HTTP 200 stub that only client-side redirects to /d2l/login.
+      const authenticated = await this.hasLiveSession(page);
 
-      // Some institutions (e.g. TU Delft) serve anonymous /d2l/home as an
-      // HTTP 200 stub whose inline script client-side redirects to /d2l/login.
-      // goto() can resolve while the URL still reads /d2l/home, so the URL
-      // alone would misreport a logged-out session as authenticated. Detect
-      // the stub and wait for its redirect to leave /d2l/home.
-      let sawLoginRedirect = false;
-      if (currentUrl.includes("/d2l/home") && (await this.isAnonymousLoginStub(page))) {
-        log("DEBUG", "Anonymous login-redirect stub detected on /d2l/home — waiting for redirect");
+      if (authenticated) {
+        log("INFO", "Already authenticated - skipping SSO login");
+        // Let any SAML hop settle so token extraction sees a rendered /d2l/home
+        if (!page.url().includes("/d2l/home")) {
+          try {
+            await page.waitForURL(/\/d2l\/home/, { timeout: 15000 });
+            log("DEBUG", "Redirect chain settled on /d2l/home");
+          } catch {
+            // Extraction navigates to /d2l/home itself if needed
+          }
+        }
+        await this.settleDom(page);
+        return true;
+      }
+
+      // Login required. If the anonymous stub is still showing /d2l/home, give
+      // its client-side redirect a moment to leave so the SSO flow can't
+      // mistake the stale URL for a completed login.
+      if (page.url().includes("/d2l/home")) {
         try {
           await page.waitForURL((url) => !url.toString().includes("/d2l/home"), {
             timeout: 15000,
           });
         } catch {
-          // Stayed on /d2l/home — treat as a live session after all.
+          log("DEBUG", "No redirect away from /d2l/home — starting SSO flow in place");
         }
-        currentUrl = page.url();
-        sawLoginRedirect = !currentUrl.includes("/d2l/home");
       }
 
-      // Some institutions (e.g. USC) bounce through an extra SAML hop such as
-      // /d2l/lp/auth/login/samlLogin.d2l before landing on /d2l/home, even when the
-      // restored cookies are still valid. `domcontentloaded` can resolve mid-chain,
-      // so re-check once the redirects settle. Without this we misread a live session
-      // as logged-out and start an SSO flow that waits for a login form that never
-      // renders — which throws before the caller can persist session.json.
-      // Skipped when we just watched the anonymous stub redirect to login —
-      // that chain heads to the IdP, never back to /d2l/home.
-      if (!currentUrl.includes("/d2l/home") && !sawLoginRedirect) {
-        try {
-          await page.waitForURL(/\/d2l\/home/, { timeout: 15000 });
-          log("DEBUG", "Redirect chain settled on /d2l/home");
-        } catch {
-          // Never landed on /d2l/home — a real login is required.
-        }
-        currentUrl = page.url();
-      }
+      let loginSuccess: boolean;
 
-      // If we were redirected away from /d2l/home, login is required
-      const needsLogin = !currentUrl.includes("/d2l/home");
-
-      if (needsLogin) {
-        let loginSuccess: boolean;
-
-        if (this.ssoFlow.hasCredentials()) {
-          log("INFO", `Login required (redirected to ${currentUrl}) - starting SSO flow`);
-          loginSuccess = await this.ssoFlow.login(page);
-          
-          if (!loginSuccess) {
-            log("WARN", "Automated SSO flow failed or timed out. Falling back to manual login.");
-            log("INFO", "Please complete the login manually in the open browser window.");
-            loginSuccess = await this.ssoFlow.manualLogin(page);
-          }
-        } else {
-          log("INFO", `Login required (redirected to ${currentUrl}) - opening browser for manual login`);
-          loginSuccess = await this.ssoFlow.manualLogin(page);
-        }
+      if (this.ssoFlow.hasCredentials()) {
+        log("INFO", `Login required (at ${page.url()}) - starting SSO flow`);
+        // CredentialsRejectedError propagates: a wrong stored password can't
+        // be fixed by waiting for the user, so there is no manual fallback.
+        loginSuccess = await this.ssoFlow.login(page);
 
         if (!loginSuccess) {
-          throw new BrowserAuthError("Manual login flow failed", "manual_login");
+          if (this.config.headless) {
+            throw new BrowserAuthError(
+              "Automated SSO login failed and the browser is headless, so manual login is impossible. Re-run with D2L_HEADLESS=false to log in by hand.",
+              "sso_login"
+            );
+          }
+          log("WARN", "Automated SSO flow failed or timed out. Falling back to manual login.");
+          loginSuccess = await this.ssoFlow.manualLogin(page);
         }
-
-        try {
-          await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-        } catch (e) {
-          log("DEBUG", "Page wait timed out, proceeding anyway");
-        }
-        return false;
+      } else {
+        log("INFO", `Login required (at ${page.url()}) - opening browser for manual login`);
+        loginSuccess = await this.ssoFlow.manualLogin(page);
       }
 
-      log("INFO", "Already authenticated - skipping SSO login");
-      try {
-        await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-      } catch (e) {
-        log("DEBUG", "Page wait timed out, proceeding anyway");
+      if (!loginSuccess) {
+        throw new BrowserAuthError("Manual login flow failed", "manual_login");
       }
-      return true;
+
+      await this.settleDom(page);
+      return false;
     } catch (error) {
       if (error instanceof BrowserAuthError) throw error;
       throw new BrowserAuthError(
@@ -574,22 +604,31 @@ export class BrowserAuth {
   }
 
   /**
-   * Detect D2L's anonymous stub at /d2l/home: an empty-body document whose
-   * inline script does window.location.replace('/d2l/login?...'). Served with
-   * HTTP 200 (seen on brightspace.tudelft.nl), so neither the status code nor
-   * the URL reveals that a login redirect is pending.
+   * Probe /users/whoami through the page's request context, which shares the
+   * browser's cookie jar: a live D2L session answers 200, anything else 403.
    */
-  private async isAnonymousLoginStub(page: Page): Promise<boolean> {
+  private async hasLiveSession(page: Page): Promise<boolean> {
     try {
-      return await page.evaluate(() => {
-        const bodyEmpty = !document.body || document.body.childElementCount === 0;
-        const html = document.documentElement?.innerHTML ?? "";
-        return bodyEmpty && html.includes("/d2l/login");
-      });
+      const response = await page.request.get(
+        `${this.config.baseUrl}/d2l/api/lp/1.45/users/whoami`,
+        { maxRedirects: 0, timeout: 15000 }
+      );
+      log("DEBUG", `Session probe (whoami) returned HTTP ${response.status()}`);
+      return response.ok();
+    } catch (error) {
+      // Probe failed outright (network hiccup) — fall back to reading the
+      // URL once the page has finished loading.
+      log("WARN", "Session probe failed — falling back to URL check", error);
+      await this.settleDom(page);
+      return page.url().includes("/d2l/home");
+    }
+  }
+
+  private async settleDom(page: Page): Promise<void> {
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
     } catch {
-      // Evaluation fails with "execution context destroyed" when the stub's
-      // redirect is already navigating — which means a login redirect IS pending.
-      return true;
+      log("DEBUG", "Page wait timed out, proceeding anyway");
     }
   }
 

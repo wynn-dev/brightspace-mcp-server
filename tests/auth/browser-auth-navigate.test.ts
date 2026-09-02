@@ -1,19 +1,24 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { BrowserAuth } from "../../src/auth/browser-auth.js";
+import { CredentialsRejectedError } from "../../src/auth/sso-flow.js";
+import { BrowserAuthError } from "../../src/utils/errors.js";
 import type { AppConfig } from "../../src/types/index.js";
 
 /**
- * Regression tests for navigateAndLogin()'s already-authenticated detection.
+ * Tests for navigateAndLogin()'s authenticated-session detection.
  *
- * Some institutions (USC, for example) redirect through an intermediate SAML hop
- * such as /d2l/lp/auth/login/samlLogin.d2l before landing on /d2l/home, even when
- * the restored cookies are still valid. page.goto(..., { waitUntil:
- * "domcontentloaded" }) can resolve while the URL is still that intermediate hop,
- * so reading page.url() immediately afterwards misreports a live session as
- * logged-out and kicks off an SSO flow that waits forever for a login form.
+ * The URL alone is unreliable in both directions:
+ *  - USC bounces a *valid* session through /d2l/lp/auth/login/samlLogin.d2l
+ *    before landing on /d2l/home, and goto(domcontentloaded) can resolve mid-hop.
+ *  - TU Delft serves anonymous /d2l/home as an HTTP 200 stub whose inline
+ *    script client-side redirects to /d2l/login, so a logged-out browser can
+ *    read as /d2l/home.
+ * So the decision comes from a cookie-authenticated /users/whoami probe, and
+ * the URL is only used to let redirects settle afterwards.
  */
 
 const BASE_URL = "https://brightspace.example.edu";
+const IDP_URL = "https://login.tudelft.nl/sso/module.php/core/loginuserpass?AuthState=abc";
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -29,21 +34,26 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 }
 
 /**
- * Fake Page that reproduces a multi-hop redirect: goto() settles on the SAML hop
- * and only a subsequent waitForURL() observes the final /d2l/home landing.
+ * Fake Page reproducing a multi-hop redirect: goto() settles on hops[0] and
+ * each waitForURL() advances through the remaining hops until one matches.
+ * `session` controls the whoami probe: true → 200, false → 403, "throw" → network error.
  */
-function makeRedirectingPage(hops: string[], options: { anonymousStub?: boolean } = {}) {
+function makePage(hops: string[], session: boolean | "throw") {
   let current = hops[0];
   let index = 0;
   return {
     goto: vi.fn(async () => {
       current = hops[0];
+      index = 0;
       return null;
     }),
     url: vi.fn(() => current),
-    // Models isAnonymousLoginStub()'s page.evaluate: true when /d2l/home is
-    // the anonymous empty-body stub that client-side redirects to /d2l/login.
-    evaluate: vi.fn(async () => options.anonymousStub ?? false),
+    request: {
+      get: vi.fn(async () => {
+        if (session === "throw") throw new Error("ECONNRESET");
+        return { ok: () => session, status: () => (session ? 200 : 403) };
+      }),
+    },
     waitForURL: vi.fn(async (predicate: RegExp | ((url: URL) => boolean)) => {
       while (index < hops.length - 1) {
         index += 1;
@@ -62,71 +72,150 @@ function makeRedirectingPage(hops: string[], options: { anonymousStub?: boolean 
 
 describe("BrowserAuth.navigateAndLogin", () => {
   let auth: BrowserAuth;
-  let ssoFlow: { login: ReturnType<typeof vi.fn>; manualLogin: ReturnType<typeof vi.fn>; hasCredentials: ReturnType<typeof vi.fn> };
+  let ssoFlow: {
+    login: ReturnType<typeof vi.fn>;
+    manualLogin: ReturnType<typeof vi.fn>;
+    hasCredentials: ReturnType<typeof vi.fn>;
+  };
 
-  beforeEach(() => {
-    auth = new BrowserAuth(makeConfig());
+  function setup(config: Partial<AppConfig> = {}) {
+    auth = new BrowserAuth(makeConfig(config));
     ssoFlow = {
       login: vi.fn(async () => true),
       manualLogin: vi.fn(async () => true),
       hasCredentials: vi.fn(() => true),
     };
-    // navigateAndLogin is private; swap the SSO flow so we can assert it stays unused.
+    // navigateAndLogin is private; swap the SSO flow so we can observe it.
     (auth as any).ssoFlow = ssoFlow;
-  });
+  }
+
+  beforeEach(() => setup());
 
   const navigate = (page: unknown): Promise<boolean> =>
     (auth as any).navigateAndLogin(page);
 
-  it("treats a valid session as authenticated when goto settles on an intermediate SAML hop", async () => {
-    const page = makeRedirectingPage([
-      `${BASE_URL}/d2l/lp/auth/login/samlLogin.d2l`,
-      `${BASE_URL}/d2l/home`,
-    ]);
+  describe("live session (whoami 200)", () => {
+    it("short-circuits without waiting when goto already lands on /d2l/home", async () => {
+      const page = makePage([`${BASE_URL}/d2l/home`], true);
 
-    await expect(navigate(page)).resolves.toBe(true);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-    expect(ssoFlow.manualLogin).not.toHaveBeenCalled();
+      await expect(navigate(page)).resolves.toBe(true);
+      expect(page.waitForURL).not.toHaveBeenCalled();
+      expect(ssoFlow.login).not.toHaveBeenCalled();
+      expect(ssoFlow.manualLogin).not.toHaveBeenCalled();
+    });
+
+    it("lets an intermediate SAML hop settle on /d2l/home instead of starting SSO", async () => {
+      const page = makePage(
+        [`${BASE_URL}/d2l/lp/auth/login/samlLogin.d2l`, `${BASE_URL}/d2l/home`],
+        true
+      );
+
+      await expect(navigate(page)).resolves.toBe(true);
+      expect(page.waitForURL).toHaveBeenCalledOnce();
+      expect(page.url()).toBe(`${BASE_URL}/d2l/home`);
+      expect(ssoFlow.login).not.toHaveBeenCalled();
+    });
+
+    it("still reports authenticated if the hop never reaches /d2l/home", async () => {
+      const page = makePage(
+        [`${BASE_URL}/d2l/lp/auth/login/samlLogin.d2l`, `${BASE_URL}/d2l/home/12345`],
+        true
+      );
+
+      // /d2l/home/12345 matches the settle regex, but even a total miss is fine:
+      // token extraction navigates to /d2l/home itself.
+      await expect(navigate(page)).resolves.toBe(true);
+      expect(ssoFlow.login).not.toHaveBeenCalled();
+    });
   });
 
-  it("still performs SSO login when the redirect chain never reaches /d2l/home", async () => {
-    const page = makeRedirectingPage([
-      `${BASE_URL}/d2l/lp/auth/login/login.d2l`,
-      "https://sso.example.edu/idp/profile/SAML2/Redirect/SSO",
-    ]);
+  describe("no session (whoami 403)", () => {
+    it("waits for the anonymous /d2l/home stub to redirect, then runs SSO login (TU Delft)", async () => {
+      const page = makePage([`${BASE_URL}/d2l/home`, IDP_URL], false);
 
-    await expect(navigate(page)).resolves.toBe(false);
-    expect(ssoFlow.login).toHaveBeenCalledOnce();
+      await expect(navigate(page)).resolves.toBe(false);
+      expect(page.waitForURL).toHaveBeenCalledOnce();
+      expect(page.url()).toBe(IDP_URL);
+      expect(ssoFlow.login).toHaveBeenCalledOnce();
+    });
+
+    it("runs SSO login in place if the stub never redirects away from /d2l/home", async () => {
+      const page = makePage([`${BASE_URL}/d2l/home`], false);
+
+      await expect(navigate(page)).resolves.toBe(false);
+      expect(ssoFlow.login).toHaveBeenCalledOnce();
+    });
+
+    it("runs SSO login directly when goto already landed on the IdP", async () => {
+      const page = makePage([`${BASE_URL}/d2l/lp/auth/login/login.d2l`, IDP_URL], false);
+
+      await expect(navigate(page)).resolves.toBe(false);
+      expect(page.waitForURL).not.toHaveBeenCalled();
+      expect(ssoFlow.login).toHaveBeenCalledOnce();
+    });
+
+    it("goes straight to manual login when no credentials are configured", async () => {
+      ssoFlow.hasCredentials.mockReturnValue(false);
+      const page = makePage([IDP_URL], false);
+
+      await expect(navigate(page)).resolves.toBe(false);
+      expect(ssoFlow.login).not.toHaveBeenCalled();
+      expect(ssoFlow.manualLogin).toHaveBeenCalledOnce();
+    });
   });
 
-  it("short-circuits without waiting when goto already lands on /d2l/home", async () => {
-    const page = makeRedirectingPage([`${BASE_URL}/d2l/home`]);
+  describe("automated login failure handling", () => {
+    it("falls back to manual login in headed mode", async () => {
+      setup({ headless: false });
+      ssoFlow.login.mockResolvedValue(false);
+      const page = makePage([IDP_URL], false);
 
-    await expect(navigate(page)).resolves.toBe(true);
-    expect(page.waitForURL).not.toHaveBeenCalled();
-    expect(ssoFlow.login).not.toHaveBeenCalled();
+      await expect(navigate(page)).resolves.toBe(false);
+      expect(ssoFlow.manualLogin).toHaveBeenCalledOnce();
+    });
+
+    it("fails fast in headless mode instead of waiting for a manual login nobody can see", async () => {
+      setup({ headless: true });
+      ssoFlow.login.mockResolvedValue(false);
+      const page = makePage([IDP_URL], false);
+
+      await expect(navigate(page)).rejects.toThrow(/headless/);
+      expect(ssoFlow.manualLogin).not.toHaveBeenCalled();
+    });
+
+    it("propagates CredentialsRejectedError without a manual fallback", async () => {
+      setup({ headless: false });
+      const rejected = new CredentialsRejectedError("IdP said no");
+      ssoFlow.login.mockRejectedValue(rejected);
+      const page = makePage([IDP_URL], false);
+
+      await expect(navigate(page)).rejects.toBe(rejected);
+      expect(ssoFlow.manualLogin).not.toHaveBeenCalled();
+    });
+
+    it("throws a BrowserAuthError when manual login also fails", async () => {
+      setup({ headless: false });
+      ssoFlow.login.mockResolvedValue(false);
+      ssoFlow.manualLogin.mockResolvedValue(false);
+      const page = makePage([IDP_URL], false);
+
+      await expect(navigate(page)).rejects.toBeInstanceOf(BrowserAuthError);
+    });
   });
 
-  it("performs SSO login when /d2l/home is the anonymous client-side-redirect stub (TU Delft)", async () => {
-    // TU Delft serves anonymous /d2l/home as an HTTP 200 stub whose inline
-    // script redirects to /d2l/login → SAML initiate → login.tudelft.nl.
-    const page = makeRedirectingPage(
-      [
-        `${BASE_URL}/d2l/home`,
-        "https://login.tudelft.nl/sso/module.php/core/loginuserpass?AuthState=abc",
-      ],
-      { anonymousStub: true }
-    );
+  describe("probe failure", () => {
+    it("falls back to the URL when the whoami probe itself errors", async () => {
+      const page = makePage([`${BASE_URL}/d2l/home`], "throw");
 
-    await expect(navigate(page)).resolves.toBe(false);
-    expect(ssoFlow.login).toHaveBeenCalledOnce();
-  });
+      await expect(navigate(page)).resolves.toBe(true);
+      expect(ssoFlow.login).not.toHaveBeenCalled();
+    });
 
-  it("treats /d2l/home as authenticated when the stub check finds real page content", async () => {
-    const page = makeRedirectingPage([`${BASE_URL}/d2l/home`], { anonymousStub: false });
+    it("treats a non-home URL as logged out when the probe errors", async () => {
+      const page = makePage([IDP_URL], "throw");
 
-    await expect(navigate(page)).resolves.toBe(true);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-    expect(ssoFlow.manualLogin).not.toHaveBeenCalled();
+      await expect(navigate(page)).resolves.toBe(false);
+      expect(ssoFlow.login).toHaveBeenCalledOnce();
+    });
   });
 });

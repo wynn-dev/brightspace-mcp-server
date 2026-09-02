@@ -7,6 +7,7 @@
 export { BrowserAuth } from "./browser-auth.js";
 export { PurdueSSOFlow } from "./purdue-sso.js";
 export { TUDelftSSOFlow } from "./tudelft-sso.js";
+export { BaseSSOFlow, CredentialsRejectedError } from "./sso-flow.js";
 export type { SSOFlow, SSOCredentials } from "./sso-flow.js";
 export { TokenManager } from "./token-manager.js";
 export { SessionStore } from "./session-store.js";
