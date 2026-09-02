@@ -10,8 +10,6 @@ import { DownloadFileSchema } from "./schemas.js";
 import { toolResponse, sanitizeError, errorResponse } from "./tool-helpers.js";
 import { log } from "../utils/logger.js";
 import {
-  validateDownloadPath,
-  validateFileType,
   validateContentId,
   MAX_FILE_SIZE,
 } from "../utils/file-validator.js";
@@ -109,7 +107,7 @@ export function registerDownloadFile(
 /**
  * Extract a filename from a Content-Disposition header.
  */
-export function parseContentDispositionFilename(
+function parseContentDispositionFilename(
   disposition: string
 ): string | null {
   const extended = disposition.match(/filename\*\s*=\s*([^;]+)/i);

@@ -20,7 +20,6 @@ const SESSION_VERSION = 1;
 // Encryption constants
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // GCM recommended IV length
-const AUTH_TAG_LENGTH = 16; // GCM auth tag length
 const SALT_LENGTH = 16;
 const SALT_FILE_NAME = "salt";
 

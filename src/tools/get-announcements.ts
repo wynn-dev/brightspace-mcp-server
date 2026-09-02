@@ -54,7 +54,7 @@ interface EnrollmentResponse {
 /**
  * Map a raw D2L news item to a clean announcement object.
  */
-export function mapNewsItem(item: NewsItem) {
+function mapNewsItem(item: NewsItem) {
   return {
     id: item.Id,
     title: item.Title,

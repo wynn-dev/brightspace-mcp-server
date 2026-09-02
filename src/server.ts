@@ -36,7 +36,7 @@ export const PKG_VERSION = (() => {
   }
 })();
 
-export interface McpServerDeps {
+interface McpServerDeps {
   apiClient: D2LApiClient;
   tokenManager: Pick<TokenManager, "getToken">;
   authRunner: Pick<AuthRunner, "run">;

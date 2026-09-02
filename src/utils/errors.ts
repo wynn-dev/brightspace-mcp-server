@@ -14,13 +14,6 @@ export class AuthError extends Error {
   }
 }
 
-export class TokenExpiredError extends AuthError {
-  constructor(public readonly expiredAt: number) {
-    super(`[PBMCP-1002] Token expired at ${new Date(expiredAt).toISOString()}`);
-    this.name = "TokenExpiredError";
-  }
-}
-
 export class BrowserAuthError extends AuthError {
   constructor(
     message: string,

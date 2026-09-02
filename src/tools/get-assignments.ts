@@ -108,7 +108,7 @@ interface EnrollmentResponse {
 /**
  * Fetch assignments (dropbox + quizzes) for a single course
  */
-export async function fetchCourseAssignments(
+async function fetchCourseAssignments(
   apiClient: D2LApiClient,
   courseId: number
 ): Promise<any[]> {

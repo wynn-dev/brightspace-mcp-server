@@ -16,7 +16,7 @@ import { log } from "./logger.js";
  * @param filename - Original filename
  * @returns First available filename (may be original or with suffix)
  */
-export async function resolveFilenameConflict(
+async function resolveFilenameConflict(
   dir: string,
   filename: string
 ): Promise<string> {
