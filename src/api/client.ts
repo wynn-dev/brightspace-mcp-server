@@ -179,7 +179,7 @@ export class D2LApiClient {
       }
       log("WARN", "Auto-reauthentication did not produce a valid token");
     }
-    throw new ApiError(401, path, "Session expired. Please re-authenticate with `npm run auth`.");
+    throw new ApiError(401, path, "Session expired. Please re-authenticate with `pnpm run auth`.");
   }
 
   /**
@@ -212,7 +212,7 @@ export class D2LApiClient {
           throw new ApiError(
             401,
             path,
-            "Session expired. Please re-authenticate with `npm run auth`.",
+            "Session expired. Please re-authenticate with `pnpm run auth`.",
           );
         }
 
@@ -226,7 +226,7 @@ export class D2LApiClient {
           throw new ApiError(
             401,
             path,
-            "Session expired. Please re-authenticate with `npm run auth`.",
+            "Session expired. Please re-authenticate with `pnpm run auth`.",
           );
         }
 
@@ -310,7 +310,7 @@ export class D2LApiClient {
           throw new ApiError(
             401,
             path,
-            "Session expired. Please re-authenticate with `npm run auth`.",
+            "Session expired. Please re-authenticate with `pnpm run auth`.",
           );
         }
 
@@ -324,7 +324,7 @@ export class D2LApiClient {
           throw new ApiError(
             401,
             path,
-            "Session expired. Please re-authenticate with `npm run auth`.",
+            "Session expired. Please re-authenticate with `pnpm run auth`.",
           );
         }
 

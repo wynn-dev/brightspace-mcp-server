@@ -57,7 +57,7 @@ export function sanitizeError(error: unknown): CallToolResult {
     if (error.status === 401) {
       return errorResponse(
         "Authentication expired. Auto-reauthentication was attempted but failed. " +
-        "Please run `npm run auth` in the project directory, then try again."
+        "Please run `pnpm run auth` in the project directory, then try again."
       );
     }
     if (error.status === 403) {

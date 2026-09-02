@@ -389,10 +389,10 @@ async function main(): Promise<void> {
     if (ok) {
       console.log(green("\n  Authentication successful!"));
     } else {
-      console.log(yellow("\n  Authentication failed. You can retry later with: npm run auth"));
+      console.log(yellow("\n  Authentication failed. You can retry later with: pnpm run auth"));
     }
   } else {
-    console.log(dim("  You can authenticate later by running: npm run auth"));
+    console.log(dim("  You can authenticate later by running: pnpm run auth"));
   }
   console.log("");
 
@@ -457,7 +457,7 @@ async function main(): Promise<void> {
   console.log(`  Config saved to: ${dim(getConfigStorePath())}`);
   console.log("");
   console.log("  Next steps:");
-  console.log("  1. Run 'npm run auth' to authenticate (if you haven't already)");
+  console.log("  1. Run 'pnpm run auth' to authenticate (if you haven't already)");
   console.log("  2. Restart Claude Desktop");
   console.log("  3. Ask Claude about your Brightspace courses!");
   console.log("");

@@ -79,7 +79,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       title: "Check Authentication Status",
       description:
         "Check if you are authenticated with Brightspace. " +
-        "Run `npm run auth` first to authenticate. " +
+        "Run `pnpm run auth` first to authenticate. " +
         "Use this when the user asks if they're logged in, if authentication is working, " +
         "or when other tools return auth errors.",
       annotations: { readOnlyHint: true },
@@ -106,7 +106,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
                 type: "text",
                 text:
                   "Not authenticated. Auto-reauthentication was attempted but failed. " +
-                  "Please run `npm run auth` in the project directory to log in. " +
+                  "Please run `pnpm run auth` in the project directory to log in. " +
                   "Make sure your stored credentials are correct and your internet connection is stable.",
               },
             ],

@@ -8,14 +8,16 @@ Works with any school on D2L Brightspace. Login is automated for Purdue (Duo MFA
 
 ## Install
 
-Requires [Node.js 18+](https://nodejs.org/) and git. The project runs from a clone; everything is an `npm run` script.
+Requires [Node.js 18+](https://nodejs.org/), git, and [pnpm](https://pnpm.io/) (`corepack enable` installs the pinned version). The project runs from a clone; everything is a `pnpm run` script.
 
 ```bash
 git clone https://github.com/wynn-dev/brightspace-mcp-server.git
 cd brightspace-mcp-server
-npm install          # installs dependencies, downloads Chromium, builds
-npm run setup        # add -- --tudelft or -- --purdue to skip the URL prompt
+pnpm install          # installs dependencies, downloads Chromium, builds
+pnpm run setup       # add --tudelft or --purdue to skip the URL prompt
 ```
+
+Always use `pnpm run setup` and `pnpm run update` with the explicit `run` — bare `pnpm setup` and `pnpm update` are pnpm's own built-in commands.
 
 The wizard stores your credentials in `~/.brightspace-mcp/config.json`, logs in once, and registers the server in Claude Desktop and Cursor if they're installed. Restart your AI client afterwards.
 
@@ -47,10 +49,10 @@ Install brightspace-mcp-server for me by following LLMs.md in this repo
 To reach Brightspace from an MCP client on another machine, serve MCP over Streamable HTTP instead of stdio:
 
 ```bash
-MCP_AUTH_TOKEN="$(openssl rand -hex 32)" MCP_HTTP_HOST=0.0.0.0 npm run start:http
+MCP_AUTH_TOKEN="$(openssl rand -hex 32)" MCP_HTTP_HOST=0.0.0.0 pnpm run start:http
 ```
 
-Or put those settings in `.env` / `.env.local` (see `.env.example`) and just run `npm run start:http`.
+Or put those settings in `.env` / `.env.local` (see `.env.example`) and just run `pnpm run start:http`.
 
 This exposes the 11 read-only tools at `http://<host>:8787/mcp` (`download_file` is left out because it would write to the server's disk). Clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`:
 
@@ -66,22 +68,22 @@ claude mcp add --transport http brightspace http://your-host:8787/mcp --header "
 | `MCP_ALLOWED_HOSTS` | loopback names | `host:port` values accepted in the `Host` header (DNS-rebinding protection), e.g. `myserver.lan:8787`. |
 | `MCP_ALLOWED_ORIGINS` | — | Browser origins to accept, if any. |
 
-On a headless host, set `"headless": true` in `~/.brightspace-mcp/config.json` so re-login runs without a display (unattended re-login needs a school without an MFA prompt), install Chromium's system libraries on Linux with `npm run playwright:deps`, and keep the port behind a VPN or TLS-terminating proxy — the server itself speaks plain HTTP.
+On a headless host, set `"headless": true` in `~/.brightspace-mcp/config.json` so re-login runs without a display (unattended re-login needs a school without an MFA prompt), install Chromium's system libraries on Linux with `pnpm run playwright:deps`, and keep the port behind a VPN or TLS-terminating proxy — the server itself speaks plain HTTP.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `npm run setup` | Setup wizard (`-- --purdue`, `-- --tudelft`) |
-| `npm run auth` | Log in again if automatic re-auth fails |
-| `npm run start` | Stdio MCP server (what your AI client runs) |
-| `npm run start:http` | Streamable HTTP MCP server |
-| `npm run update` | Pull the latest code, reinstall, rebuild |
-| `npm run build` / `npm run dev` | Compile once / watch |
-| `npm test` | Run the test suite |
-| `npm run playwright:deps` | Install Chromium system libraries (Linux) |
+| `pnpm run setup` | Setup wizard (`-- --purdue`, `-- --tudelft`) |
+| `pnpm run auth` | Log in again if automatic re-auth fails |
+| `pnpm run start` | Stdio MCP server (what your AI client runs) |
+| `pnpm run start:http` | Streamable HTTP MCP server |
+| `pnpm run update` | Pull the latest code, reinstall, rebuild |
+| `pnpm run build` / `pnpm run dev` | Compile once / watch |
+| `pnpm test` | Run the test suite |
+| `pnpm run playwright:deps` | Install Chromium system libraries (Linux) |
 
-Sessions re-authenticate automatically. If that fails (missed Duo push, expired cookies), run `npm run auth`.
+Sessions re-authenticate automatically. If that fails (missed Duo push, expired cookies), run `pnpm run auth`.
 
 ## Configuration
 
