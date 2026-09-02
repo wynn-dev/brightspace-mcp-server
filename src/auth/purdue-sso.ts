@@ -7,6 +7,7 @@
 import type { Page } from "playwright";
 import { BrowserAuthError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
+import type { SSOFlow } from "./sso-flow.js";
 
 const SELECTORS = {
   usernameInput: "input#username",
@@ -20,7 +21,7 @@ interface PurdueSSOConfig {
   password?: string;
 }
 
-export class PurdueSSOFlow {
+export class PurdueSSOFlow implements SSOFlow {
   private config: PurdueSSOConfig;
 
   constructor(config: PurdueSSOConfig) {

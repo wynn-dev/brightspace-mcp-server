@@ -40,6 +40,12 @@ const SCHOOL_PRESETS: Record<string, SchoolPreset> = {
     usernameLabel: "Purdue career account username",
     mfaNote: "Approve the Duo push on your phone.",
   },
+  tudelft: {
+    name: "Delft University of Technology (TU Delft)",
+    baseUrl: "https://brightspace.tudelft.nl",
+    usernameLabel: "TU Delft NetID username",
+    mfaNote: "No MFA prompt — login completes automatically.",
+  },
 };
 
 // Parse --purdue, --osu, etc. from argv
