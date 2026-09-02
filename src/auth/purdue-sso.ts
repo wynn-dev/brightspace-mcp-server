@@ -7,7 +7,7 @@
 import type { Page } from "playwright";
 import { BrowserAuthError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
-import type { SSOFlow } from "./sso-flow.js";
+import { BaseSSOFlow } from "./sso-flow.js";
 
 const SELECTORS = {
   usernameInput: "input#username",
@@ -16,24 +16,8 @@ const SELECTORS = {
   staySignedInYes: "input[type=submit][value='Yes']",
 } as const;
 
-interface PurdueSSOConfig {
-  username?: string;
-  password?: string;
-}
-
-export class PurdueSSOFlow implements SSOFlow {
-  private config: PurdueSSOConfig;
-
-  constructor(config: PurdueSSOConfig) {
-    this.config = config;
-  }
-
-  /**
-   * Returns true if credentials are available for automated SSO login.
-   */
-  hasCredentials(): boolean {
-    return Boolean(this.config.username && this.config.password);
-  }
+export class PurdueSSOFlow extends BaseSSOFlow {
+  readonly loginHint = "Approve the Duo MFA request on your phone when prompted.";
 
   /**
    * Execute the complete Microsoft Entra ID SSO login flow for Purdue.
@@ -69,28 +53,9 @@ export class PurdueSSOFlow implements SSOFlow {
     }
   }
 
-  /**
-   * Manual login fallback: let the user type credentials and complete MFA themselves.
-   * The browser stays open in headed mode while we wait for /d2l/home.
-   */
-  async manualLogin(page: Page): Promise<boolean> {
-    try {
-      log("INFO", "Starting manual login flow (no saved credentials)");
-      log("INFO", "Please log in using the browser window that just opened.");
-
-      // Navigate past the campus selector so the user lands on the Shibboleth form
-      await this.handleCampusSelector(page);
-
-      // Wait up to 5 minutes for the user to complete login manually
-      log("INFO", "Waiting up to 5 minutes for you to complete login and MFA...");
-      await page.waitForURL(/\/d2l\/home/, { timeout: 300000 });
-      log("INFO", "Manual login successful - reached Brightspace home");
-
-      return true;
-    } catch (error) {
-      log("ERROR", "Manual login flow failed or timed out", error);
-      return false;
-    }
+  /** Navigate past the campus selector so the user lands on the Shibboleth form. */
+  protected override async prepareManualLogin(page: Page): Promise<void> {
+    await this.handleCampusSelector(page);
   }
 
   private async handleCampusSelector(page: Page): Promise<void> {
@@ -111,37 +76,25 @@ export class PurdueSSOFlow implements SSOFlow {
   private async enterCredentials(page: Page): Promise<void> {
     try {
       log("DEBUG", "Waiting for login form");
-      
+
       // Wait for either Purdue's username or Albany's userName (or typical email fields)
       // Use a shorter timeout so it falls back to manual login quickly if unrecognized
       const usernameSelector = 'input#username, input#userName, input[type="email"]';
       await page.waitForSelector(usernameSelector, { timeout: 10000 });
 
-      if (!this.config.username) {
-        throw new BrowserAuthError(
-          "Username is required for SSO login",
-          "credentials"
-        );
-      }
-
-      if (!this.config.password) {
-        throw new BrowserAuthError(
-          "Password is required for SSO login",
-          "credentials"
-        );
-      }
+      const { username, password } = this.requireCredentials();
 
       log("INFO", "Entering credentials");
       // Try to figure out which input actually exists
       const usernameField = await page.$(usernameSelector);
       if (usernameField) {
-        await usernameField.fill(this.config.username);
+        await usernameField.fill(username);
       }
 
       const passwordSelector = 'input#password, input[type="password"]';
       const passwordField = await page.$(passwordSelector);
       if (passwordField) {
-        await passwordField.fill(this.config.password);
+        await passwordField.fill(password);
       }
 
       // Try to click the submit button. Could be Purdue's proceed, or Albany's Log In, or a generic button
@@ -153,7 +106,7 @@ export class PurdueSSOFlow implements SSOFlow {
         // Fallback: just hit Enter on the password field
         await passwordField?.press('Enter');
       }
-      
+
       await page.waitForLoadState("networkidle");
     } catch (error) {
       log("WARN", "Automated credentials entry failed, will fallback to manual login.", error);
