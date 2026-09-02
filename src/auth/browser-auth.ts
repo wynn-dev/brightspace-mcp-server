@@ -13,17 +13,22 @@ import type { AppConfig, TokenData } from "../types/index.js";
 import { BrowserAuthError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
 import { PurdueSSOFlow } from "./purdue-sso.js";
+import { TUDelftSSOFlow } from "./tudelft-sso.js";
+import type { SSOFlow } from "./sso-flow.js";
 
 export class BrowserAuth {
   private config: AppConfig;
-  private ssoFlow: PurdueSSOFlow;
+  private ssoFlow: SSOFlow;
 
   constructor(config: AppConfig) {
     this.config = config;
-    this.ssoFlow = new PurdueSSOFlow({
+    const credentials = {
       username: config.username,
       password: config.password,
-    });
+    };
+    this.ssoFlow = TUDelftSSOFlow.matches(config.baseUrl)
+      ? new TUDelftSSOFlow(credentials)
+      : new PurdueSSOFlow(credentials);
   }
 
   /**
@@ -482,13 +487,34 @@ export class BrowserAuth {
       let currentUrl = page.url();
       log("DEBUG", `Current URL after navigation: ${currentUrl}`);
 
+      // Some institutions (e.g. TU Delft) serve anonymous /d2l/home as an
+      // HTTP 200 stub whose inline script client-side redirects to /d2l/login.
+      // goto() can resolve while the URL still reads /d2l/home, so the URL
+      // alone would misreport a logged-out session as authenticated. Detect
+      // the stub and wait for its redirect to leave /d2l/home.
+      let sawLoginRedirect = false;
+      if (currentUrl.includes("/d2l/home") && (await this.isAnonymousLoginStub(page))) {
+        log("DEBUG", "Anonymous login-redirect stub detected on /d2l/home — waiting for redirect");
+        try {
+          await page.waitForURL((url) => !url.toString().includes("/d2l/home"), {
+            timeout: 15000,
+          });
+        } catch {
+          // Stayed on /d2l/home — treat as a live session after all.
+        }
+        currentUrl = page.url();
+        sawLoginRedirect = !currentUrl.includes("/d2l/home");
+      }
+
       // Some institutions (e.g. USC) bounce through an extra SAML hop such as
       // /d2l/lp/auth/login/samlLogin.d2l before landing on /d2l/home, even when the
       // restored cookies are still valid. `domcontentloaded` can resolve mid-chain,
       // so re-check once the redirects settle. Without this we misread a live session
       // as logged-out and start an SSO flow that waits for a login form that never
       // renders — which throws before the caller can persist session.json.
-      if (!currentUrl.includes("/d2l/home")) {
+      // Skipped when we just watched the anonymous stub redirect to login —
+      // that chain heads to the IdP, never back to /d2l/home.
+      if (!currentUrl.includes("/d2l/home") && !sawLoginRedirect) {
         try {
           await page.waitForURL(/\/d2l\/home/, { timeout: 15000 });
           log("DEBUG", "Redirect chain settled on /d2l/home");
@@ -544,6 +570,26 @@ export class BrowserAuth {
         "navigate_login",
         error as Error
       );
+    }
+  }
+
+  /**
+   * Detect D2L's anonymous stub at /d2l/home: an empty-body document whose
+   * inline script does window.location.replace('/d2l/login?...'). Served with
+   * HTTP 200 (seen on brightspace.tudelft.nl), so neither the status code nor
+   * the URL reveals that a login redirect is pending.
+   */
+  private async isAnonymousLoginStub(page: Page): Promise<boolean> {
+    try {
+      return await page.evaluate(() => {
+        const bodyEmpty = !document.body || document.body.childElementCount === 0;
+        const html = document.documentElement?.innerHTML ?? "";
+        return bodyEmpty && html.includes("/d2l/login");
+      });
+    } catch {
+      // Evaluation fails with "execution context destroyed" when the stub's
+      // redirect is already navigating — which means a login redirect IS pending.
+      return true;
     }
   }
 

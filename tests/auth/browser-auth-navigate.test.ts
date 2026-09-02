@@ -32,7 +32,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
  * Fake Page that reproduces a multi-hop redirect: goto() settles on the SAML hop
  * and only a subsequent waitForURL() observes the final /d2l/home landing.
  */
-function makeRedirectingPage(hops: string[]) {
+function makeRedirectingPage(hops: string[], options: { anonymousStub?: boolean } = {}) {
   let current = hops[0];
   let index = 0;
   return {
@@ -41,6 +41,9 @@ function makeRedirectingPage(hops: string[]) {
       return null;
     }),
     url: vi.fn(() => current),
+    // Models isAnonymousLoginStub()'s page.evaluate: true when /d2l/home is
+    // the anonymous empty-body stub that client-side redirects to /d2l/login.
+    evaluate: vi.fn(async () => options.anonymousStub ?? false),
     waitForURL: vi.fn(async (predicate: RegExp | ((url: URL) => boolean)) => {
       while (index < hops.length - 1) {
         index += 1;
@@ -102,5 +105,28 @@ describe("BrowserAuth.navigateAndLogin", () => {
     await expect(navigate(page)).resolves.toBe(true);
     expect(page.waitForURL).not.toHaveBeenCalled();
     expect(ssoFlow.login).not.toHaveBeenCalled();
+  });
+
+  it("performs SSO login when /d2l/home is the anonymous client-side-redirect stub (TU Delft)", async () => {
+    // TU Delft serves anonymous /d2l/home as an HTTP 200 stub whose inline
+    // script redirects to /d2l/login → SAML initiate → login.tudelft.nl.
+    const page = makeRedirectingPage(
+      [
+        `${BASE_URL}/d2l/home`,
+        "https://login.tudelft.nl/sso/module.php/core/loginuserpass?AuthState=abc",
+      ],
+      { anonymousStub: true }
+    );
+
+    await expect(navigate(page)).resolves.toBe(false);
+    expect(ssoFlow.login).toHaveBeenCalledOnce();
+  });
+
+  it("treats /d2l/home as authenticated when the stub check finds real page content", async () => {
+    const page = makeRedirectingPage([`${BASE_URL}/d2l/home`], { anonymousStub: false });
+
+    await expect(navigate(page)).resolves.toBe(true);
+    expect(ssoFlow.login).not.toHaveBeenCalled();
+    expect(ssoFlow.manualLogin).not.toHaveBeenCalled();
   });
 });
