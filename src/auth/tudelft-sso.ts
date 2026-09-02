@@ -5,9 +5,12 @@
  */
 
 import type { Page } from "playwright";
-import { BrowserAuthError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
-import type { SSOCredentials, SSOFlow } from "./sso-flow.js";
+import {
+  BaseSSOFlow,
+  CredentialsRejectedError,
+  raceOutcomes,
+} from "./sso-flow.js";
 
 /**
  * TU Delft login chain (no institution picker, no MFA):
@@ -19,22 +22,28 @@ import type { SSOCredentials, SSOFlow } from "./sso-flow.js";
  *
  * On bad credentials SimpleSAMLphp reloads the same form with a
  * ".message-box.error" block instead of navigating away.
+ *
+ * SURFconext shows an attribute-release consent page on a user's first login
+ * to a service provider (and again after attribute changes). Its accept form
+ * is OpenConext engineblock's `<form id="accept">` with a submit named
+ * `accept_terms_button`. The selector is deliberately that specific: the
+ * normal chain also passes through engine.surfconext.nl on a transient
+ * auto-submitting SAML page, which must not be clicked.
  */
 const SELECTORS = {
   usernameInput: "input#username",
   passwordInput: "input#password",
   submitButton: "button#submit_button",
   errorMessage: ".message-box.error",
+  consentAccept: 'form#accept [name="accept_terms_button"]',
 } as const;
 
-const IDP_URL_PATTERN = /login\.tudelft\.nl/;
+const HOME_URL_PATTERN = /\/d2l\/home/;
+const ARRIVAL_TIMEOUT_MS = 30000;
+const POST_SUBMIT_TIMEOUT_MS = 90000;
 
-export class TUDelftSSOFlow implements SSOFlow {
-  private config: SSOCredentials;
-
-  constructor(config: SSOCredentials) {
-    this.config = config;
-  }
+export class TUDelftSSOFlow extends BaseSSOFlow {
+  readonly loginHint = "No MFA prompt — login completes automatically.";
 
   /** True if the configured Brightspace instance is TU Delft's. */
   static matches(baseUrl: string): boolean {
@@ -46,74 +55,69 @@ export class TUDelftSSOFlow implements SSOFlow {
     }
   }
 
-  hasCredentials(): boolean {
-    return Boolean(this.config.username && this.config.password);
-  }
-
   async login(page: Page): Promise<boolean> {
-    try {
-      log("INFO", "Starting TU Delft SSO login flow (login.tudelft.nl via SURFconext)");
+    const { username, password } = this.requireCredentials();
+    log("INFO", "Starting TU Delft SSO login flow (login.tudelft.nl via SURFconext)");
 
-      if (!this.config.username || !this.config.password) {
-        throw new BrowserAuthError(
-          "Username and password are required for TU Delft SSO login",
-          "credentials"
-        );
-      }
+    // Saved storage state also carries the IdP's own session cookies. When
+    // only the Brightspace session expired, SimpleSAMLphp auto-POSTs a fresh
+    // SAML response without showing a form, and we land straight on home.
+    const arrival = await raceOutcomes({
+      form: page.waitForSelector(SELECTORS.usernameInput, { timeout: ARRIVAL_TIMEOUT_MS }),
+      home: page.waitForURL(HOME_URL_PATTERN, { timeout: ARRIVAL_TIMEOUT_MS }),
+    });
 
-      // Ride the redirect chain to the SimpleSAMLphp login form
-      await page.waitForURL(IDP_URL_PATTERN, { timeout: 30000 });
-      await page.waitForSelector(SELECTORS.usernameInput, { timeout: 20000 });
+    if (arrival === "home") {
+      log("INFO", "IdP session still active — SSO completed without a login form");
+      return true;
+    }
+    if (arrival !== "form") {
+      log("WARN", `TU Delft login form never appeared — last URL: ${page.url()}`);
+      return false;
+    }
 
-      log("INFO", "Entering NetID credentials");
-      await page.fill(SELECTORS.usernameInput, this.config.username);
-      await page.fill(SELECTORS.passwordInput, this.config.password);
-      await page.click(SELECTORS.submitButton);
+    log("INFO", "Entering NetID credentials");
+    await page.fill(SELECTORS.usernameInput, username);
+    await page.fill(SELECTORS.passwordInput, password);
+    await page.click(SELECTORS.submitButton);
 
-      // Success navigates back to Brightspace home; failure re-renders the
-      // form with an error box. Swallow each waiter's own timeout so the
-      // loser doesn't surface an unhandled rejection after the race.
-      const outcome = await Promise.race([
-        page
-          .waitForURL(/\/d2l\/home/, { timeout: 90000 })
-          .then(() => "home" as const)
-          .catch(() => null),
-        page
-          .waitForSelector(SELECTORS.errorMessage, { state: "visible", timeout: 90000 })
-          .then(() => "error" as const)
-          .catch(() => null),
-      ]);
+    const deadline = Date.now() + POST_SUBMIT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const outcome = await raceOutcomes({
+        home: page.waitForURL(HOME_URL_PATTERN, { timeout: remaining }),
+        error: page.waitForSelector(SELECTORS.errorMessage, {
+          state: "visible",
+          timeout: remaining,
+        }),
+        consent: page.waitForSelector(SELECTORS.consentAccept, {
+          state: "visible",
+          timeout: remaining,
+        }),
+      });
 
       if (outcome === "home") {
         log("INFO", "Login successful - reached Brightspace home");
         return true;
       }
-
       if (outcome === "error") {
-        log("ERROR", "TU Delft SSO rejected the credentials (incorrect username or password)");
-        return false;
+        throw new CredentialsRejectedError(
+          "TU Delft SSO rejected the NetID username or password"
+        );
       }
-
-      log("WARN", `TU Delft SSO login timed out — last URL: ${page.url()}`);
-      return false;
-    } catch (error) {
-      log("ERROR", "TU Delft SSO login flow failed", error);
-      return false;
+      if (outcome === "consent") {
+        log("INFO", "SURFconext attribute-release consent page detected — accepting");
+        await page.click(SELECTORS.consentAccept);
+        // Don't re-detect (and re-click) the same form while it's still submitting
+        await page
+          .waitForSelector(SELECTORS.consentAccept, { state: "detached", timeout: 15000 })
+          .catch(() => {});
+        continue;
+      }
+      break;
     }
-  }
 
-  async manualLogin(page: Page): Promise<boolean> {
-    try {
-      log("INFO", "Starting manual login flow for TU Delft");
-      log("INFO", "Please log in with your NetID in the browser window that just opened.");
-      log("INFO", "Waiting up to 5 minutes for you to complete login...");
-
-      await page.waitForURL(/\/d2l\/home/, { timeout: 300000 });
-      log("INFO", "Manual login successful - reached Brightspace home");
-      return true;
-    } catch (error) {
-      log("ERROR", "Manual login flow failed or timed out", error);
-      return false;
-    }
+    log("WARN", `TU Delft SSO login timed out — last URL: ${page.url()}`);
+    return false;
   }
 }

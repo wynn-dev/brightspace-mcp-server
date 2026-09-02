@@ -13,7 +13,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { loadConfig } from "./utils/config.js";
-import { BrowserAuth, TokenManager } from "./auth/index.js";
+import { BrowserAuth, CredentialsRejectedError, TokenManager } from "./auth/index.js";
 
 // Load .env file so credentials are available via process.env
 dotenv.config({ quiet: true });
@@ -40,18 +40,18 @@ async function main(): Promise<void> {
     // Print header
     console.log(`\n=== Brightspace Authentication v${pkgVersion} - by Rohan Muppa ===\n`);
 
+    // Create BrowserAuth with config
+    const browserAuth = new BrowserAuth(config);
+
     // Check for credentials and provide status
     if (config.username && config.password) {
       console.log(`Authenticating as: ${config.username}`);
-      console.log("Approve the Duo MFA request on your phone when prompted.");
+      console.log(browserAuth.loginHint);
     } else {
       console.log("No credentials. Opening browser for manual login.");
     }
 
     console.log("\nStarting authentication...\n");
-
-    // Create BrowserAuth with config
-    const browserAuth = new BrowserAuth(config);
 
     // Authenticate and get token
     const token = await browserAuth.authenticate();
@@ -93,10 +93,15 @@ async function main(): Promise<void> {
     console.error("\n=== Authentication failed ===");
     console.error("\nError:", error instanceof Error ? error.message : String(error));
     console.error("\nTroubleshooting tips:");
-    console.error("1. Ensure D2L_USERNAME and D2L_PASSWORD are set correctly in .env");
-    console.error("2. If MFA approval failed, make sure you approved the Duo push on your phone");
-    console.error("3. Check that you have a stable internet connection");
-    console.error("4. Try running with D2L_HEADLESS=false to see the browser");
+    if (error instanceof CredentialsRejectedError) {
+      console.error("1. Your school's login page rejected the stored username or password");
+      console.error("2. Re-run `npx brightspace-mcp-server setup` (or update D2L_USERNAME / D2L_PASSWORD) with the correct credentials");
+    } else {
+      console.error("1. Ensure D2L_USERNAME and D2L_PASSWORD are set correctly in .env");
+      console.error("2. If your school uses MFA, make sure you approved the prompt on your phone");
+      console.error("3. Check that you have a stable internet connection");
+      console.error("4. Try running with D2L_HEADLESS=false to see the browser");
+    }
     console.error("\nFor more details, check the error message above.\n");
     process.exit(1);
   }

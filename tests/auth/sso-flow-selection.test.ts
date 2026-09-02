@@ -44,4 +44,11 @@ describe("BrowserAuth SSO flow selection", () => {
     const auth = new BrowserAuth(makeConfig("https://purdue.brightspace.com"));
     expect((auth as any).ssoFlow).toBeInstanceOf(PurdueSSOFlow);
   });
+
+  it("exposes the selected flow's login hint so the CLI never promises the wrong MFA", () => {
+    const tudelft = new BrowserAuth(makeConfig("https://brightspace.tudelft.nl"));
+    const purdue = new BrowserAuth(makeConfig("https://purdue.brightspace.com"));
+    expect(tudelft.loginHint).toMatch(/No MFA/);
+    expect(purdue.loginHint).toMatch(/Duo/);
+  });
 });

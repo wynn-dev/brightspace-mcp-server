@@ -30,7 +30,8 @@ interface SchoolPreset {
   name: string;
   baseUrl: string;
   usernameLabel: string;
-  mfaNote: string;
+  /** Omit for schools with no second factor — the auth CLI prints the flow's own hint. */
+  mfaNote?: string;
 }
 
 const SCHOOL_PRESETS: Record<string, SchoolPreset> = {
@@ -44,7 +45,6 @@ const SCHOOL_PRESETS: Record<string, SchoolPreset> = {
     name: "Delft University of Technology (TU Delft)",
     baseUrl: "https://brightspace.tudelft.nl",
     usernameLabel: "TU Delft NetID username",
-    mfaNote: "No MFA prompt — login completes automatically.",
   },
 };
 
@@ -360,7 +360,7 @@ async function main(): Promise<void> {
 
   // ── Step 4: MFA info ─────────────────────────────────────────────
   if (preset) {
-    console.log(dim(`  MFA: ${preset.mfaNote}`));
+    if (preset.mfaNote) console.log(dim(`  MFA: ${preset.mfaNote}`));
   } else {
     console.log(dim("  MFA: You will be prompted to approve via Duo on your phone during auth."));
   }
