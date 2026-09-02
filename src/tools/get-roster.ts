@@ -4,12 +4,10 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { D2LApiClient, DEFAULT_CACHE_TTLS } from "../api/index.js";
-import {
-  GetRosterSchema,
-} from "./schemas.js";
-import { toolResponse, sanitizeError } from "./tool-helpers.js";
+import { DEFAULT_CACHE_TTLS, type D2LApiClient } from "../api/index.js";
+import { GetRosterSchema } from "./schemas.js";
+import { defineTool } from "./define-tool.js";
+import { toolResponse } from "./tool-helpers.js";
 import { log } from "../utils/logger.js";
 
 interface ClasslistUser {
@@ -35,29 +33,20 @@ interface ClasslistResponse {
 const INSTRUCTOR_ROLE_ID = 109;
 const TA_ROLE_ID = 135;
 
-/**
- * Fetch a page of classlist users with optional filters
- */
+/** Cap on the full-class listing to keep MCP responses a sane size. */
+const MAX_STUDENTS = 100;
+
 async function fetchClasslistPage(
   apiClient: D2LApiClient,
   courseId: number,
   options?: { roleId?: number; searchTerm?: string }
 ): Promise<ClasslistUser[]> {
   const params = new URLSearchParams();
-
-  if (options?.roleId !== undefined) {
-    params.append("roleId", options.roleId.toString());
-  }
-
-  if (options?.searchTerm) {
-    params.append("searchTerm", options.searchTerm);
-  }
+  if (options?.roleId !== undefined) params.append("roleId", options.roleId.toString());
+  if (options?.searchTerm) params.append("searchTerm", options.searchTerm);
 
   const queryString = params.toString();
-  const path = apiClient.le(
-    courseId,
-    `/classlist/paged/${queryString ? "?" + queryString : ""}`
-  );
+  const path = apiClient.le(courseId, `/classlist/paged/${queryString ? "?" + queryString : ""}`);
 
   const response = await apiClient.get<ClasslistResponse>(path, {
     ttl: DEFAULT_CACHE_TTLS.roster,
@@ -74,88 +63,53 @@ async function fetchClasslistPage(
   return response.Objects;
 }
 
-/**
- * Register get_roster tool
- */
-export function registerGetRoster(
-  server: McpServer,
-  apiClient: D2LApiClient
-): void {
-  server.registerTool(
-    "get_roster",
-    {
-      title: "Get Course Roster",
-      description:
-        "Fetch the roster for a course including instructors, TAs, and optionally students with their names, emails, and roles. Use this when the user asks about classmates, instructor contact info, TA emails, professor names, or who's in a class. By default returns only instructors and TAs for privacy. Use includeStudents to get full class list.",
-      inputSchema: GetRosterSchema,
-      annotations: { readOnlyHint: true },
-    },
-    async (args: any) => {
-      try {
-        log("DEBUG", "get_roster tool called", { args });
+export const registerGetRoster = defineTool(
+  {
+    name: "get_roster",
+    title: "Get Course Roster",
+    description:
+      "Fetch the roster for a course including instructors, TAs, and optionally students with their names, emails, and roles. Use this when the user asks about classmates, instructor contact info, TA emails, professor names, or who's in a class. By default returns only instructors and TAs for privacy. Use includeStudents to get full class list.",
+    schema: GetRosterSchema,
+  },
+  async ({ courseId, includeStudents, searchTerm }, { apiClient }) => {
+    let allUsers: ClasslistUser[] = [];
 
-        // Parse and validate input
-        const { courseId, includeStudents, searchTerm } = GetRosterSchema.parse(args);
+    if (!includeStudents) {
+      const [instructorResult, taResult] = await Promise.allSettled([
+        fetchClasslistPage(apiClient, courseId, { roleId: INSTRUCTOR_ROLE_ID, searchTerm }),
+        fetchClasslistPage(apiClient, courseId, { roleId: TA_ROLE_ID, searchTerm }),
+      ]);
 
-        let allUsers: ClasslistUser[] = [];
+      if (instructorResult.status === "fulfilled") {
+        allUsers.push(...instructorResult.value);
+      } else {
+        log("WARN", "get_roster: Failed to fetch instructors", { error: instructorResult.reason });
+      }
 
-        if (!includeStudents) {
-          // Fetch instructors and TAs in parallel
-          const [instructorResult, taResult] = await Promise.allSettled([
-            fetchClasslistPage(apiClient, courseId, {
-              roleId: INSTRUCTOR_ROLE_ID,
-              searchTerm,
-            }),
-            fetchClasslistPage(apiClient, courseId, {
-              roleId: TA_ROLE_ID,
-              searchTerm,
-            }),
-          ]);
+      if (taResult.status === "fulfilled") {
+        allUsers.push(...taResult.value);
+      } else {
+        log("WARN", "get_roster: Failed to fetch TAs", { error: taResult.reason });
+      }
+    } else {
+      allUsers = await fetchClasslistPage(apiClient, courseId, { searchTerm });
 
-          // Merge results
-          if (instructorResult.status === "fulfilled") {
-            allUsers.push(...instructorResult.value);
-          } else {
-            log("WARN", "get_roster: Failed to fetch instructors", {
-              error: instructorResult.reason,
-            });
-          }
-
-          if (taResult.status === "fulfilled") {
-            allUsers.push(...taResult.value);
-          } else {
-            log("WARN", "get_roster: Failed to fetch TAs", {
-              error: taResult.reason,
-            });
-          }
-        } else {
-          // Fetch all users
-          allUsers = await fetchClasslistPage(apiClient, courseId, {
-            searchTerm,
-          });
-
-          // Cap at 100 users to prevent MCP response size issues
-          if (allUsers.length > 100) {
-            log("WARN", "get_roster: Result set exceeds 100 users, truncating", {
-              total: allUsers.length,
-              returned: 100,
-            });
-            allUsers = allUsers.slice(0, 100);
-          }
-        }
-
-        // Map to clean output
-        const roster = allUsers.map((user) => ({
-          name: user.DisplayName,
-          email: user.Email || null,
-          role: user.ClasslistRoleDisplayName,
-        }));
-
-        log("INFO", `get_roster: Retrieved ${roster.length} users for course ${courseId}`);
-        return toolResponse(roster);
-      } catch (error) {
-        return sanitizeError(error);
+      if (allUsers.length > MAX_STUDENTS) {
+        log("WARN", `get_roster: Result set exceeds ${MAX_STUDENTS} users, truncating`, {
+          total: allUsers.length,
+          returned: MAX_STUDENTS,
+        });
+        allUsers = allUsers.slice(0, MAX_STUDENTS);
       }
     }
-  );
-}
+
+    const roster = allUsers.map((user) => ({
+      name: user.DisplayName,
+      email: user.Email || null,
+      role: user.ClasslistRoleDisplayName,
+    }));
+
+    log("INFO", `get_roster: Retrieved ${roster.length} users for course ${courseId}`);
+    return toolResponse(roster);
+  }
+);
