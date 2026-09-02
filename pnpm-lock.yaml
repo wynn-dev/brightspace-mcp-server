@@ -11,9 +11,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.26.0
         version: 1.26.0(zod@4.3.6)
-      ajv:
-        specifier: ^8.18.0
-        version: 8.18.0
       dotenv:
         specifier: ^17.2.4
         version: 17.2.4
