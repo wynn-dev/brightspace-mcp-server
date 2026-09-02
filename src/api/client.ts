@@ -4,8 +4,7 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import type { D2LApiClientOptions, ApiVersions, CacheTTLs, TokenData } from "./types.js";
-import { DEFAULT_CACHE_TTLS } from "./types.js";
+import type { D2LApiClientOptions, ApiVersions, TokenData } from "./types.js";
 import { TTLCache } from "./cache.js";
 import { TokenBucket } from "./rate-limiter.js";
 import { discoverVersions } from "./version-discovery.js";
@@ -30,7 +29,6 @@ export class D2LApiClient {
   private readonly tokenManager: D2LApiClientOptions["tokenManager"];
   private readonly cache: TTLCache;
   private readonly rateLimiter: TokenBucket;
-  private readonly cacheTTLs: CacheTTLs;
   private readonly timeoutMs: number;
   private readonly onAuthExpired?: () => Promise<boolean>;
   private versions: ApiVersions | null = null;
@@ -49,8 +47,6 @@ export class D2LApiClient {
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.onAuthExpired = options.onAuthExpired;
 
-    // Merge user-provided TTLs with defaults
-    this.cacheTTLs = { ...DEFAULT_CACHE_TTLS, ...options.cacheTTLs };
 
     // Initialize cache and rate limiter
     this.cache = new TTLCache();

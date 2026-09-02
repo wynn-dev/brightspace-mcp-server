@@ -8,7 +8,7 @@ Works with any school on D2L Brightspace. Login is automated for Purdue (Duo MFA
 
 ## Install
 
-Requires [Node.js 18+](https://nodejs.org/), git, and [pnpm](https://pnpm.io/) (`corepack enable` installs the pinned version). The project runs from a clone; everything is a `pnpm run` script.
+Requires [Node.js 22+](https://nodejs.org/), git, and [pnpm](https://pnpm.io/) (`corepack enable` installs the pinned version). The project runs from a clone; everything is a `pnpm run` script.
 
 ```bash
 git clone https://github.com/wynn-dev/brightspace-mcp-server.git
@@ -98,6 +98,7 @@ Set in `~/.brightspace-mcp/config.json` (written by the wizard), or as environme
 | `D2L_TOKEN_TTL` | `3600` | Seconds before a saved session is considered stale |
 | `D2L_INCLUDE_COURSES` / `D2L_EXCLUDE_COURSES` | — | Comma-separated course IDs to filter |
 | `D2L_ACTIVE_ONLY` | `true` | Hide inactive courses |
+| `D2L_LOG_LEVEL` | `INFO` | Log verbosity on stderr: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 
 ## Security
 

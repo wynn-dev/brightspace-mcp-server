@@ -11,12 +11,12 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { log } from "../utils/logger.js";
 
-export const MCP_PATH = "/mcp";
+const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/healthz";
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const SWEEP_INTERVAL_MS = 60_000;
 
-export interface HttpServerOptions {
+interface HttpServerOptions {
   host: string;
   /** 0 picks an ephemeral port (tests). */
   port: number;

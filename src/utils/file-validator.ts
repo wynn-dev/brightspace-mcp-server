@@ -18,7 +18,7 @@ export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
  * Allowlist of MIME types safe for download.
  * Prevents execution of potentially malicious file types (executables, scripts).
  */
-export const ALLOWED_MIME_TYPES: string[] = [
+const ALLOWED_MIME_TYPES: string[] = [
   // Documents
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
@@ -156,20 +156,4 @@ export function validateContentId(id: unknown): number {
     throw new Error("Content ID must be a positive integer");
   }
   return id;
-}
-
-/**
- * Validate URL starts with expected D2L base URL.
- * Prevents SSRF attacks via user-controlled URLs.
- *
- * @param url - URL to validate
- * @param expectedBaseUrl - Expected D2L base URL (e.g., "https://purdue.brightspace.com")
- * @throws Error if URL doesn't match expected base
- */
-export function validateBaseUrl(url: string, expectedBaseUrl: string): void {
-  if (!url.startsWith(expectedBaseUrl)) {
-    throw new Error(
-      `URL must start with ${expectedBaseUrl}, got: ${url.substring(0, 50)}...`
-    );
-  }
 }

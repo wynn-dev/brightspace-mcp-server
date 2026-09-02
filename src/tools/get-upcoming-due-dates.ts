@@ -35,10 +35,6 @@ interface EnrollmentItem {
   };
 }
 
-interface EnrollmentResponse {
-  Items: EnrollmentItem[];
-}
-
 /**
  * Register get_upcoming_due_dates tool
  */
