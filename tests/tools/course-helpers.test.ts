@@ -31,6 +31,21 @@ describe("fetchEnrolledCourses", () => {
     expect(courses.map((c) => c.id)).toEqual([1, 2, 3]);
   });
 
+  it("merges every bookmark page of enrollments", async () => {
+    const apiClient = fakeApiClient({
+      "/enrollments/myenrollments/?orgUnitTypeId=3&isActive=true": enrollmentsPage([COURSES[0]], "p2"),
+      "bookmark=p2": enrollmentsPage([COURSES[2]]),
+    });
+
+    const courses = await fetchEnrolledCourses(apiClient as any, makeConfig());
+
+    expect(courses.map((c) => c.id)).toEqual([1, 3]);
+    expect(apiClient.requested).toEqual([
+      "/d2l/api/lp/1.0/enrollments/myenrollments/?orgUnitTypeId=3&isActive=true",
+      "/d2l/api/lp/1.0/enrollments/myenrollments/?orgUnitTypeId=3&isActive=true&bookmark=p2",
+    ]);
+  });
+
   it("applies include/exclude course filters from config", async () => {
     const apiClient = fakeApiClient({ "/enrollments/myenrollments/": enrollmentsPage(COURSES) });
     const config = makeConfig({ courseFilter: { activeOnly: true, excludeCourseIds: [3] } });

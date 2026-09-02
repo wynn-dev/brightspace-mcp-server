@@ -45,4 +45,21 @@ describe("get_roster", () => {
     expect(result[0].name).toBe("User 1");
     expect(apiClient.requested).toEqual(["/d2l/api/le/1.0/4/classlist/paged/"]);
   });
+
+  it("stops paging once the 100 cap is reached instead of walking every page", async () => {
+    const page = (from: number, next?: string) =>
+      objectPage(Array.from({ length: 60 }, (_, i) => user(from + i, "Student")), next);
+    const apiClient = fakeApiClient({
+      "/4/classlist/paged/": page(1, "https://h/d2l/api/le/1.0/4/classlist/paged/?bookmark=p2"),
+      "?bookmark=p2": page(61, "https://h/d2l/api/le/1.0/4/classlist/paged/?bookmark=p3"),
+      "?bookmark=p3": page(121),
+    });
+    const { call } = captureTool(registerGetRoster, apiClient);
+
+    const result = parse(await call({ courseId: 4, includeStudents: true }));
+
+    expect(result).toHaveLength(100);
+    expect(result[99].name).toBe("User 100");
+    expect(apiClient.requested).toHaveLength(2);
+  });
 });

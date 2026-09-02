@@ -42,6 +42,19 @@ describe("get_upcoming_due_dates", () => {
     expect(apiClient.requested[0]).toContain("orgUnitIdsCSV=5");
   });
 
+  it("follows Next across event pages before sorting", async () => {
+    const apiClient = fakeApiClient({
+      "/calendar/events/myEvents/": objectPage([event("late", "2026-09-10T00:00:00Z")], "https://h/d2l/api/le/1.0/calendar/events/myEvents/?bookmark=p2"),
+      "?bookmark=p2": objectPage([event("soon", "2026-09-03T00:00:00Z")]),
+    });
+    const { call } = captureTool(registerGetUpcomingDueDates, apiClient);
+
+    const result = parse(await call({ courseId: 1 }));
+
+    expect(result.map((e: { id: string }) => e.id)).toEqual(["soon", "late"]);
+    expect(apiClient.requested).toHaveLength(2);
+  });
+
   it("maps events and sorts them soonest-first", async () => {
     const apiClient = fakeApiClient({
       "/calendar/events/myEvents/": objectPage([

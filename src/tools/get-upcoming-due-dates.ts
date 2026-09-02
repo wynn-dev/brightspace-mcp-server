@@ -4,7 +4,7 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { DEFAULT_CACHE_TTLS } from "../api/index.js";
+import { DEFAULT_CACHE_TTLS, getAllObjectListPages } from "../api/index.js";
 import { GetUpcomingDueDatesSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { fetchEnrolledCourses } from "./course-helpers.js";
@@ -46,11 +46,10 @@ export const registerGetUpcomingDueDates = defineTool(
       `/calendar/events/myEvents/?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&orgUnitIdsCSV=${orgUnitIds}`
     );
 
-    // D2L returns an ObjectListPage wrapper with "Objects" (NOT "Items")
-    const response = await apiClient.get<{ Objects: EventDataInfo[]; Next: string | null }>(path, {
+    const events = await getAllObjectListPages<EventDataInfo>(apiClient, path, {
       ttl: DEFAULT_CACHE_TTLS.assignments,
+      label: "myEvents",
     });
-    const events = response.Objects ?? [];
 
     // Soonest due first
     const mappedEvents = events

@@ -4,7 +4,7 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { DEFAULT_CACHE_TTLS } from "../api/index.js";
+import { DEFAULT_CACHE_TTLS, getAllObjectListPages } from "../api/index.js";
 import { GetClasslistEmailsSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { toolResponse } from "./tool-helpers.js";
@@ -15,11 +15,6 @@ interface ClasslistUser {
   DisplayName: string;
   Email: string | null;
   ClasslistRoleDisplayName: string;
-}
-
-interface ClasslistResponse {
-  Objects: ClasslistUser[];
-  Next?: string | null;
 }
 
 export const registerGetClasslistEmails = defineTool(
@@ -33,21 +28,14 @@ export const registerGetClasslistEmails = defineTool(
     schema: GetClasslistEmailsSchema,
   },
   async ({ courseId }, { apiClient }) => {
-    const response = await apiClient.get<ClasslistResponse>(
+    const users = await getAllObjectListPages<ClasslistUser>(
+      apiClient,
       apiClient.le(courseId, "/classlist/paged/"),
-      { ttl: DEFAULT_CACHE_TTLS.roster }
+      { ttl: DEFAULT_CACHE_TTLS.roster, label: "classlist" }
     );
 
-    if (response.Next) {
-      log(
-        "WARN",
-        "get_classlist_emails: Pagination detected but not implemented. Some users may be missing.",
-        { courseId, next: response.Next }
-      );
-    }
-
     // Users with privacy-hidden emails come back as null
-    const emails = response.Objects
+    const emails = users
       .filter((user) => user.Email)
       .map((user) => ({
         name: user.DisplayName,
@@ -55,7 +43,7 @@ export const registerGetClasslistEmails = defineTool(
         role: user.ClasslistRoleDisplayName,
       }));
 
-    log("INFO", `get_classlist_emails: ${emails.length} emails from ${response.Objects.length} users in course ${courseId}`);
+    log("INFO", `get_classlist_emails: ${emails.length} emails from ${users.length} users in course ${courseId}`);
     return toolResponse(emails);
   }
 );

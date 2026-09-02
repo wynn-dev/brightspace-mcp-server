@@ -24,4 +24,17 @@ describe("get_classlist_emails", () => {
     ]);
     expect(apiClient.requested).toEqual(["/d2l/api/le/1.0/4/classlist/paged/"]);
   });
+
+  it("follows Next across pages", async () => {
+    const apiClient = fakeApiClient({
+      "/4/classlist/paged/": objectPage([user(1, "a@x.edu")], "https://lms.example.edu/d2l/api/le/1.0/4/classlist/paged/?bookmark=p2"),
+      "?bookmark=p2": objectPage([user(2, "b@x.edu")]),
+    });
+    const { call } = captureTool(registerGetClasslistEmails, apiClient);
+
+    const result = parse(await call({ courseId: 4 }));
+
+    expect(result.map((u: { email: string }) => u.email)).toEqual(["a@x.edu", "b@x.edu"]);
+    expect(apiClient.requested[1]).toBe("/d2l/api/le/1.0/4/classlist/paged/?bookmark=p2");
+  });
 });

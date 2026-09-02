@@ -4,7 +4,7 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { DEFAULT_CACHE_TTLS, type D2LApiClient } from "../api/index.js";
+import { DEFAULT_CACHE_TTLS, getAllObjectListPages, type D2LApiClient } from "../api/index.js";
 import { GetRosterSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { toolResponse } from "./tool-helpers.js";
@@ -22,11 +22,6 @@ interface ClasslistUser {
   LastAccessed: string | null;
 }
 
-interface ClasslistResponse {
-  Objects: ClasslistUser[];
-  Next?: string | null;
-}
-
 // Purdue-specific role IDs. These are institution-specific values.
 // If using at another institution, you may need to adjust these.
 // Discover by fetching classlist for a known course and inspecting RoleId values.
@@ -36,10 +31,10 @@ const TA_ROLE_ID = 135;
 /** Cap on the full-class listing to keep MCP responses a sane size. */
 const MAX_STUDENTS = 100;
 
-async function fetchClasslistPage(
+async function fetchClasslist(
   apiClient: D2LApiClient,
   courseId: number,
-  options?: { roleId?: number; searchTerm?: string }
+  options?: { roleId?: number; searchTerm?: string; maxItems?: number }
 ): Promise<ClasslistUser[]> {
   const params = new URLSearchParams();
   if (options?.roleId !== undefined) params.append("roleId", options.roleId.toString());
@@ -48,19 +43,11 @@ async function fetchClasslistPage(
   const queryString = params.toString();
   const path = apiClient.le(courseId, `/classlist/paged/${queryString ? "?" + queryString : ""}`);
 
-  const response = await apiClient.get<ClasslistResponse>(path, {
+  return getAllObjectListPages<ClasslistUser>(apiClient, path, {
     ttl: DEFAULT_CACHE_TTLS.roster,
+    label: "classlist",
+    maxItems: options?.maxItems,
   });
-
-  if (response.Next) {
-    log(
-      "WARN",
-      "get_roster: Pagination detected but not implemented. Some users may be missing.",
-      { courseId, next: response.Next }
-    );
-  }
-
-  return response.Objects;
 }
 
 export const registerGetRoster = defineTool(
@@ -76,8 +63,8 @@ export const registerGetRoster = defineTool(
 
     if (!includeStudents) {
       const [instructorResult, taResult] = await Promise.allSettled([
-        fetchClasslistPage(apiClient, courseId, { roleId: INSTRUCTOR_ROLE_ID, searchTerm }),
-        fetchClasslistPage(apiClient, courseId, { roleId: TA_ROLE_ID, searchTerm }),
+        fetchClasslist(apiClient, courseId, { roleId: INSTRUCTOR_ROLE_ID, searchTerm }),
+        fetchClasslist(apiClient, courseId, { roleId: TA_ROLE_ID, searchTerm }),
       ]);
 
       if (instructorResult.status === "fulfilled") {
@@ -92,7 +79,8 @@ export const registerGetRoster = defineTool(
         log("WARN", "get_roster: Failed to fetch TAs", { error: taResult.reason });
       }
     } else {
-      allUsers = await fetchClasslistPage(apiClient, courseId, { searchTerm });
+      // Stop paging as soon as the cap is reached rather than walking every page
+      allUsers = await fetchClasslist(apiClient, courseId, { searchTerm, maxItems: MAX_STUDENTS });
 
       if (allUsers.length > MAX_STUDENTS) {
         log("WARN", `get_roster: Result set exceeds ${MAX_STUDENTS} users, truncating`, {

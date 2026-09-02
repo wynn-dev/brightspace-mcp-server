@@ -4,7 +4,7 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { DEFAULT_CACHE_TTLS, isApiStatus, type D2LApiClient } from "../api/index.js";
+import { DEFAULT_CACHE_TTLS, getAllLpPages, isApiStatus, type D2LApiClient } from "../api/index.js";
 import { applyCourseFilter } from "../utils/course-filter.js";
 import { log } from "../utils/logger.js";
 import type { AppConfig } from "../types/index.js";
@@ -13,11 +13,6 @@ import type { AppConfig } from "../types/index.js";
 export interface EnrollmentItem {
   OrgUnit: { Id: number; Name: string; Code: string };
   Access: { ClasslistRoleName: string; IsActive: boolean; LastAccessed: string | null };
-}
-
-interface EnrollmentResponse {
-  Items: EnrollmentItem[];
-  PagingInfo?: { HasMoreItems: boolean; Bookmark?: string };
 }
 
 /** Key order matters: this is get_my_courses' JSON output. */
@@ -44,16 +39,13 @@ export async function fetchEnrolledCourses(
   const path = apiClient.lp(
     `/enrollments/myenrollments/?orgUnitTypeId=3${activeOnly ? "&isActive=true" : ""}`
   );
-  const response = await apiClient.get<EnrollmentResponse>(path, {
+  const items = await getAllLpPages<EnrollmentItem>(apiClient, path, {
     ttl: DEFAULT_CACHE_TTLS.enrollments,
+    label: "myenrollments",
   });
 
-  if (response.PagingInfo?.HasMoreItems) {
-    log("WARN", "myenrollments: Pagination detected but not implemented. Some courses may be missing.");
-  }
-
   return applyCourseFilter(
-    response.Items.map((item) => ({
+    items.map((item) => ({
       id: item.OrgUnit.Id,
       name: item.OrgUnit.Name,
       code: item.OrgUnit.Code,

@@ -4,7 +4,7 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { DEFAULT_CACHE_TTLS, isApiStatus, type D2LApiClient } from "../api/index.js";
+import { DEFAULT_CACHE_TTLS, getAllObjectListPages, isApiStatus, type D2LApiClient } from "../api/index.js";
 import { GetAssignmentsSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { fetchEnrolledCourses, settleAcrossCourses } from "./course-helpers.js";
@@ -81,12 +81,6 @@ interface QuizAttemptData {
   Score: number | null;
   IsCompleted: boolean;
   CompletedDate: string | null;
-}
-
-/** Several LE endpoints return either a plain array or an ObjectListPage. */
-function unwrapObjects<T>(raw: T[] | { Objects?: T[] } | null | undefined): T[] {
-  if (Array.isArray(raw)) return raw;
-  return raw?.Objects ?? [];
 }
 
 function mapDropboxFolder(
@@ -194,27 +188,26 @@ async function fetchCourseAssignments(
   const assignments: CourseAssignment[] = [];
 
   const [dropboxResult, quizResult] = await Promise.allSettled([
-    apiClient.get<DropboxFolder[] | { Objects?: DropboxFolder[] }>(
-      apiClient.le(courseId, "/dropbox/folders/"),
-      { ttl }
-    ),
-    apiClient.get<QuizReadData[] | { Objects?: QuizReadData[] }>(
-      apiClient.le(courseId, "/quizzes/"),
-      { ttl }
-    ),
+    getAllObjectListPages<DropboxFolder>(apiClient, apiClient.le(courseId, "/dropbox/folders/"), {
+      ttl,
+      label: "dropbox folders",
+    }),
+    getAllObjectListPages<QuizReadData>(apiClient, apiClient.le(courseId, "/quizzes/"), {
+      ttl,
+      label: "quizzes",
+    }),
   ]);
 
   if (dropboxResult.status === "fulfilled") {
-    for (const folder of unwrapObjects(dropboxResult.value)) {
+    for (const folder of dropboxResult.value) {
       if (folder.IsHidden) continue;
 
       let submissions: DropboxSubmission[] = [];
       try {
-        submissions = unwrapObjects(
-          await apiClient.get<DropboxSubmission[] | { Objects?: DropboxSubmission[] }>(
-            apiClient.le(courseId, `/dropbox/folders/${folder.Id}/submissions/mysubmissions/`),
-            { ttl }
-          )
+        submissions = await getAllObjectListPages<DropboxSubmission>(
+          apiClient,
+          apiClient.le(courseId, `/dropbox/folders/${folder.Id}/submissions/mysubmissions/`),
+          { ttl, label: "submissions" }
         );
       } catch (error) {
         if (!isApiStatus(error, 404)) {
@@ -241,16 +234,15 @@ async function fetchCourseAssignments(
   }
 
   if (quizResult.status === "fulfilled") {
-    for (const quiz of unwrapObjects(quizResult.value)) {
+    for (const quiz of quizResult.value) {
       if (!quiz.IsActive) continue;
 
       let attempts: QuizAttemptData[] = [];
       try {
-        attempts = unwrapObjects(
-          await apiClient.get<QuizAttemptData[] | { Objects?: QuizAttemptData[] }>(
-            apiClient.le(courseId, `/quizzes/${quiz.QuizId}/attempts/`),
-            { ttl }
-          )
+        attempts = await getAllObjectListPages<QuizAttemptData>(
+          apiClient,
+          apiClient.le(courseId, `/quizzes/${quiz.QuizId}/attempts/`),
+          { ttl, label: "quiz attempts" }
         );
       } catch (error) {
         if (!isApiStatus(error, 404, 403)) {
