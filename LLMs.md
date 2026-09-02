@@ -10,7 +10,7 @@ Before anything else, read `README.md` for general context on what this project 
 
 An MCP (Model Context Protocol) server that connects an AI client to D2L Brightspace so it can read grades, assignments, announcements, syllabus, roster, discussions, and course content on demand.
 
-It is run from a git clone — nothing is published to npm. Every user-facing action is a `package.json` script.
+It is run from a git clone — nothing is published to npm. Every user-facing action is a `package.json` script run with **pnpm** (`corepack enable` installs the pinned version). Always type `pnpm run setup` / `pnpm run update` with the explicit `run`: bare `pnpm setup` and `pnpm update` are pnpm built-ins that do something else.
 
 ## Installing it for a user
 
@@ -29,22 +29,22 @@ If Node is missing or below v18, tell the user to install the LTS from https://n
 ```bash
 git clone <repo url> brightspace-mcp-server
 cd brightspace-mcp-server
-npm install
+pnpm install
 ```
 
-`npm install` also downloads Chromium for Playwright and compiles TypeScript into `build/` (via the `prepare` script). On Linux, install Chromium's system libraries once with `npm run playwright:deps`.
+`pnpm install` also downloads Chromium for Playwright and compiles TypeScript into `build/` (via the `prepare` script). On Linux, install Chromium's system libraries once with `pnpm run playwright:deps`.
 
 ### 3. Run the setup wizard
 
 ```bash
-npm run setup
+pnpm run setup
 ```
 
-School presets skip the URL prompt:
+School presets skip the URL prompt (pnpm forwards script arguments directly, no `--` separator):
 
 ```bash
-npm run setup -- --purdue
-npm run setup -- --tudelft
+pnpm run setup --purdue
+pnpm run setup --tudelft
 ```
 
 The wizard:
@@ -64,7 +64,7 @@ Claude Desktop and Cursor are auto-configured by the wizard. For any other clien
 
 The wizard prints this exact JSON at the end. Config formats and paths differ per client and change over time, so verify against current client docs rather than guessing.
 
-For a client on another machine, run `npm run start:http` instead and point the client at `http://<host>:8787/mcp` with an `Authorization: Bearer <MCP_AUTH_TOKEN>` header (see README "Remote Access").
+For a client on another machine, run `pnpm run start:http` instead and point the client at `http://<host>:8787/mcp` with an `Authorization: Bearer <MCP_AUTH_TOKEN>` header (see README "Remote Access").
 
 ### 5. Restart the AI client
 
@@ -75,7 +75,7 @@ Tell the user to fully quit and reopen their AI client so it picks up the new MC
 Sessions auto-reauthenticate on expiry. If auto-reauth fails (missed Duo push, expired cookies, stale locks), run in the clone:
 
 ```bash
-npm run auth
+pnpm run auth
 ```
 
 ## Available tools
@@ -104,9 +104,9 @@ src/
   server.ts                 createMcpServer(): tool registration shared by both transports
   http-server.ts            Streamable HTTP entrypoint (read-only, bearer auth)
   http/server.ts            HTTP transport: sessions, auth, DNS-rebinding protection
-  setup.ts                  Setup wizard (`npm run setup`)
-  auth-cli.ts               Manual reauth (`npm run auth`)
-  update.ts                 git-pull self-updater (`npm run update`)
+  setup.ts                  Setup wizard (`pnpm run setup`)
+  auth-cli.ts               Manual reauth (`pnpm run auth`)
+  update.ts                 git-pull self-updater (`pnpm run update`)
   tools/
     index.ts                Tool registry
     schemas.ts              Zod input schemas for every tool
@@ -145,17 +145,17 @@ src/
 
 | Command | What it does |
 |---------|--------------|
-| `npm install` | Install deps, download Chromium, build |
-| `npm run setup` | Interactive setup wizard (`-- --purdue` / `-- --tudelft` for presets) |
-| `npm run auth` | Manual reauth |
-| `npm run start` | Run the stdio MCP server (what AI clients invoke via `node build/index.js`) |
-| `npm run start:http` | Run the Streamable HTTP server |
-| `npm run update` | `git pull` + install + build |
-| `npm run build` | Compile TypeScript to `build/` |
-| `npm run dev` | Watch-mode TypeScript compile |
-| `npm run test` | Run Vitest suite |
-| `npm run test:run` | Run Vitest once |
-| `npm run playwright:deps` | Install Chromium system libraries (Linux) |
+| `pnpm install` | Install deps, download Chromium, build |
+| `pnpm run setup` | Interactive setup wizard (`-- --purdue` / `-- --tudelft` for presets) |
+| `pnpm run auth` | Manual reauth |
+| `pnpm run start` | Run the stdio MCP server (what AI clients invoke via `node build/index.js`) |
+| `pnpm run start:http` | Run the Streamable HTTP server |
+| `pnpm run update` | `git pull` + install + build |
+| `pnpm run build` | Compile TypeScript to `build/` |
+| `pnpm run dev` | Watch-mode TypeScript compile |
+| `pnpm run test` | Run Vitest suite |
+| `pnpm run test:run` | Run Vitest once |
+| `pnpm run playwright:deps` | Install Chromium system libraries (Linux) |
 
 ## Storage locations
 

@@ -111,7 +111,7 @@ function main(): void {
   // Install dependencies
   console.log(dim("  Installing dependencies..."));
   try {
-    run("npm install", { silent: true });
+    run("pnpm install", { silent: true });
   } catch {
     console.error(red("  Error: Failed to install dependencies."));
     process.exit(1);
@@ -120,7 +120,7 @@ function main(): void {
   // Build
   console.log(dim("  Building..."));
   try {
-    run("npm run build", { silent: true });
+    run("pnpm run build", { silent: true });
   } catch {
     console.error(red("  Error: Build failed."));
     process.exit(1);

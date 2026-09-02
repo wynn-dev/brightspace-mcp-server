@@ -12,7 +12,7 @@ No Co-Authored-By lines. No phase/plan numbers.
 
 ## Distribution
 
-This project is not published to npm. Users clone the repo and run everything through `package.json` scripts (`npm run setup`, `npm run auth`, `npm run start`, `npm run start:http`, `npm run update`). `npm install` builds automatically via the `prepare` script. The setup wizard registers the server in MCP clients as `node <abs path>/build/index.js`.
+This project is not published to npm. The package manager is pnpm (pinned via `packageManager`; `corepack enable`). Users clone the repo and run everything through `package.json` scripts — always with the explicit `run` for `setup`/`update`, since `pnpm setup`/`pnpm update` are pnpm built-ins (`pnpm run setup`, `pnpm run auth`, `pnpm run start`, `pnpm run start:http`, `pnpm run update`). `pnpm install` builds automatically via the `prepare` script. The setup wizard registers the server in MCP clients as `node <abs path>/build/index.js`.
 
 ## Architecture
 

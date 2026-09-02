@@ -5,9 +5,15 @@
   "description": "MCP server for Brightspace (D2L). Check grades, due dates, assignments, announcements, syllabus, rosters and more via Claude, ChatGPT, Cursor, Windsurf, or any MCP client.",
   "type": "module",
   "main": "build/index.js",
+  "packageManager": "pnpm@10.30.3",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
   "scripts": {
     "build": "tsc",
-    "prepare": "npm run build",
+    "prepare": "tsc",
     "postinstall": "playwright install chromium",
     "playwright:deps": "playwright install-deps chromium",
     "setup": "node build/setup.js",
