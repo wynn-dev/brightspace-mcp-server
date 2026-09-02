@@ -1,12 +1,10 @@
 # Brightspace MCP Server
 
+> Originally created by [Rohan Muppa](https://github.com/rohanmuppa) (ECE @ Purdue) as [RohanMuppa/brightspace-mcp-server](https://github.com/RohanMuppa/brightspace-mcp-server). This repository is an independently maintained continuation that adds TU Delft SSO, a Streamable HTTP transport, and a clone-based workflow.
+
 An [MCP](https://modelcontextprotocol.io) server for D2L Brightspace. Connect it to Claude, ChatGPT, Cursor, Windsurf, or any MCP client and ask about your grades, due dates, assignments, announcements, course content, rosters, and discussions in plain language.
 
 Works with any school on D2L Brightspace. Login is automated for Purdue (Duo MFA) and TU Delft (no MFA); other schools use the generic SSO flow or a manual browser login.
-
-<p align="center">
-  <img src="docs/how-it-works.svg" alt="Architecture diagram" width="100%">
-</p>
 
 ## Install
 
@@ -114,8 +112,6 @@ Set in `~/.brightspace-mcp/config.json` (written by the wizard), or as environme
 
 `LLMs.md` has a codebase map for contributors and AI assistants.
 
-## Credits & License
-
-Originally created by [Rohan Muppa](https://github.com/rohanmuppa) (ECE @ Purdue) as [RohanMuppa/brightspace-mcp-server](https://github.com/RohanMuppa/brightspace-mcp-server). This repository is an independently maintained continuation that adds TU Delft SSO, a Streamable HTTP transport, and a clone-based workflow.
+## License
 
 MIT License · Copyright 2026 Rohan Muppa and contributors · [Report a bug](https://github.com/wynn-dev/brightspace-mcp-server/issues)
