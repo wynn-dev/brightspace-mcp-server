@@ -28,8 +28,8 @@ const createMockTokenManager = (): TokenManager => {
 };
 
 // Mock token data
-const createMockToken = (prefix: string = ""): TokenData => ({
-  accessToken: `${prefix}test-token-12345678`,
+const createMockToken = (): TokenData => ({
+  accessToken: "test-token-12345678",
   capturedAt: Date.now(),
   expiresAt: Date.now() + 3600000,
   source: "browser" as const,
@@ -163,53 +163,6 @@ describe("D2LApiClient", () => {
           }),
         }),
       );
-    });
-  });
-
-  describe("get() - Cookie authentication", () => {
-    it("should send cookie in Cookie header when token has cookie: prefix", async () => {
-      const client = new D2LApiClient({
-        baseUrl: "https://purdue.brightspace.com",
-        tokenManager: mockTokenManager,
-      });
-
-      // Initialize with versions
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => [
-          { ProductCode: "lp", LatestVersion: "1.56" },
-          { ProductCode: "le", LatestVersion: "1.91" },
-        ],
-      });
-      await client.initialize();
-
-      // Set cookie-based token
-      const cookieToken = createMockToken("cookie:");
-      await mockTokenManager.setToken(cookieToken);
-
-      // Mock API response
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ Items: [] }),
-      });
-
-      await client.get("/d2l/api/lp/1.56/users/whoami");
-
-      // Verify Cookie header (without prefix)
-      expect(mockFetch).toHaveBeenCalledWith(
-        "https://purdue.brightspace.com/d2l/api/lp/1.56/users/whoami",
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Cookie: "test-token-12345678",
-          }),
-        }),
-      );
-
-      // Verify Authorization header NOT present
-      const lastCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(lastCall[1].headers).not.toHaveProperty("Authorization");
     });
   });
 

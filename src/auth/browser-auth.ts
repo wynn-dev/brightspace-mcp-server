@@ -22,6 +22,12 @@ interface TokenInterception {
   cancel: () => void;
 }
 
+/** Cheapest authenticated endpoint; used to probe sessions and validate tokens. */
+const WHOAMI_PATH = "/d2l/api/lp/1.45/users/whoami";
+
+/** Quarantined browser profiles only matter for a post-mortem; drop them after a week. */
+const QUARANTINE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 export class BrowserAuth {
   private config: AppConfig;
   private ssoFlow: SSOFlow;
@@ -75,10 +81,6 @@ export class BrowserAuth {
    */
   private static buildChromiumArgs(): string[] {
     const args = ["--disable-blink-features=AutomationControlled"];
-
-    if (process.platform === "win32") {
-      args.push("--disable-gpu");
-    }
 
     // On macOS, NSPersistentUIRestorer is disabled via `defaults write` in
     // applyMacOSCrashGuard() — see issue #10. Passing "-ApplePersistenceIgnoreState YES"
@@ -160,14 +162,13 @@ export class BrowserAuth {
    */
   private async quarantineBrowserDataDir(browserDataDir: string): Promise<void> {
     try {
-      const stamp = Date.now();
-      const quarantined = `${browserDataDir}.corrupted.${stamp}`;
+      const quarantined = `${browserDataDir}.corrupted.${Date.now()}`;
       await fs.rename(browserDataDir, quarantined);
       log(
         "WARN",
         `Quarantined corrupted browser profile to ${quarantined} — starting fresh`
       );
-    } catch (error) {
+    } catch {
       // If rename fails (permissions, missing dir), try a recursive delete instead.
       try {
         await fs.rm(browserDataDir, { recursive: true, force: true });
@@ -176,29 +177,40 @@ export class BrowserAuth {
         log("WARN", "Failed to quarantine browser profile", rmError);
       }
     }
+    await this.pruneQuarantinedProfiles(browserDataDir);
+  }
+
+  private async pruneQuarantinedProfiles(browserDataDir: string): Promise<void> {
+    const dir = path.dirname(browserDataDir);
+    const prefix = `${path.basename(browserDataDir)}.corrupted.`;
+    const cutoff = Date.now() - QUARANTINE_RETENTION_MS;
+    try {
+      for (const entry of await fs.readdir(dir)) {
+        if (!entry.startsWith(prefix)) continue;
+        const stamp = Number(entry.slice(prefix.length));
+        if (Number.isFinite(stamp) && stamp < cutoff) {
+          await fs.rm(path.join(dir, entry), { recursive: true, force: true });
+          log("DEBUG", `Removed old quarantined profile ${entry}`);
+        }
+      }
+    } catch (error) {
+      log("DEBUG", "Could not prune quarantined profiles", error);
+    }
   }
 
   async authenticate(): Promise<TokenData> {
     let context: BrowserContext | null = null;
     const interceptions: TokenInterception[] = [];
+    let cleanShutdown: ((signal: NodeJS.Signals) => void) | null = null;
 
     try {
       log("INFO", "Starting browser authentication");
 
       await BrowserAuth.applyMacOSCrashGuard();
 
-      const mkdirOpts: { recursive: true; mode?: number } = { recursive: true };
-      if (process.platform !== "win32") {
-        mkdirOpts.mode = 0o700;
-      }
-      await fs.mkdir(this.config.sessionDir, mkdirOpts);
+      await fs.mkdir(this.config.sessionDir, { recursive: true, mode: 0o700 });
 
       const browserDataDir = path.join(this.config.sessionDir, "browser-data");
-
-      // Remove stale Chromium lock files that can block persistent context launch.
-      // On Windows, if the browser is killed by antivirus or force-closed, these
-      // lock files persist and prevent all future auth attempts.
-      await this.validateAndClearLockFiles(browserDataDir);
 
       // Force headed mode when no credentials — user must interact with the browser
       const headless = this.ssoFlow.hasCredentials() ? this.config.headless : false;
@@ -222,14 +234,14 @@ export class BrowserAuth {
       // LaunchServices crash counter ticks up, and the next launch can SIGTRAP.
       // Hook SIGINT/SIGTERM so we close the context gracefully first. See issue #10.
       const contextRef = context;
-      const cleanShutdown = async (signal: NodeJS.Signals) => {
+      cleanShutdown = (signal: NodeJS.Signals) => {
         log("WARN", `Received ${signal} — closing browser cleanly`);
-        try {
-          await contextRef.close();
-        } catch {
-          // Already closing
-        }
-        process.exit(130);
+        contextRef
+          .close()
+          .catch(() => {
+            // Already closing
+          })
+          .finally(() => process.exit(130));
       };
       process.once("SIGINT", cleanShutdown);
       process.once("SIGTERM", cleanShutdown);
@@ -257,7 +269,7 @@ export class BrowserAuth {
         ? "Session cookies active — trying to extract API token"
         : "Login complete — extracting API token from session");
 
-      const extracted = await this.tryExtractToken(page, context);
+      const extracted = await this.tryExtractToken(page);
       if (extracted) {
         await this.saveStorageState(context);
         log("INFO", "Authentication complete");
@@ -275,7 +287,7 @@ export class BrowserAuth {
         interceptions.push(freshInterception);
         await this.navigateAndLogin(freshPage);
 
-        const freshExtracted = await this.tryExtractToken(freshPage, context);
+        const freshExtracted = await this.tryExtractToken(freshPage);
         if (freshExtracted) {
           await this.saveStorageState(context);
           log("INFO", "Authentication complete");
@@ -321,17 +333,7 @@ export class BrowserAuth {
 
       const errMsg = error instanceof Error ? error.message : String(error);
 
-      // Provide platform-specific troubleshooting hints
       let hint = "";
-      if (process.platform === "win32") {
-        if (errMsg.includes("Target page, context or browser has been closed")) {
-          hint = " (Windows hint: antivirus or firewall may be closing the browser. Try adding Chromium to your exclusion list.)";
-        } else if (errMsg.includes("EPERM") || errMsg.includes("EACCES")) {
-          hint = " (Windows hint: try running as Administrator, or check that no other process has locked the session directory.)";
-        } else if (errMsg.includes("Timeout") || errMsg.includes("timeout")) {
-          hint = " (Windows hint: browser launch timed out. Close all Chromium/Chrome instances in Task Manager and try again. Antivirus may also be blocking the launch.)";
-        }
-      }
       if (BrowserAuth.isWSLOrDocker() && (errMsg.includes("spawn") || errMsg.includes("ENOENT") || errMsg.includes("sandbox"))) {
         hint = " (WSL/Docker hint: ensure Chromium dependencies are installed. Run: pnpm run playwright:deps)";
       }
@@ -343,13 +345,16 @@ export class BrowserAuth {
       );
     } finally {
       for (const interception of interceptions) interception.cancel();
+      if (cleanShutdown) {
+        process.off("SIGINT", cleanShutdown);
+        process.off("SIGTERM", cleanShutdown);
+      }
       if (context) {
         log("DEBUG", "Closing browser context");
         try {
           await context.close();
         } catch (closeError) {
-          // Context may already be closed (e.g. browser crashed or was closed externally).
-          // This is common on Windows where the browser process can terminate unexpectedly.
+          // Context may already be closed (e.g. browser crashed or was closed externally)
           log("DEBUG", "Browser context already closed or failed to close", closeError);
         }
       }
@@ -357,14 +362,11 @@ export class BrowserAuth {
   }
 
   /**
-   * Run the token extraction strategy chain, cheapest to most invasive.
-   * Each strategy validates against /users/whoami before returning.
-   * Returns null if every strategy fails.
+   * Read D2L's Bearer token out of the page's localStorage, nudging the API
+   * once if it isn't there yet. Each candidate is validated against
+   * /users/whoami before being returned. Returns null if both attempts fail.
    */
-  private async tryExtractToken(
-    page: Page,
-    context: BrowserContext
-  ): Promise<TokenData | null> {
+  private async tryExtractToken(page: Page): Promise<TokenData | null> {
     const build = (token: string): TokenData => {
       const now = Date.now();
       return {
@@ -387,7 +389,7 @@ export class BrowserAuth {
     try {
       log("DEBUG", "Navigating to API endpoint to trigger token capture");
       await page.goto(
-        `${this.config.baseUrl}/d2l/api/lp/1.57/users/whoami`,
+        `${this.config.baseUrl}${WHOAMI_PATH}`,
         { waitUntil: "load", timeout: 15000 }
       );
       const lsToken2 = await this.extractLocalStorageToken(page);
@@ -398,22 +400,6 @@ export class BrowserAuth {
     } catch {
       log("DEBUG", "Direct API navigation did not produce Bearer token");
     }
-
-    // Strategy 2: XSRF / page JS context
-    const xsrfToken = await this.extractXsrfToken(page);
-    if (xsrfToken && (await this.validateToken(xsrfToken))) {
-      log("INFO", "Extracted valid XSRF token from page context");
-      return build(xsrfToken);
-    }
-    if (xsrfToken) log("WARN", "XSRF token failed validation, trying next strategy");
-
-    // Strategy 3: Cookie-based auth
-    const cookieToken = await this.extractCookieToken(context);
-    if (cookieToken && (await this.validateToken(cookieToken))) {
-      log("INFO", "Extracted valid session cookie for API auth");
-      return build(cookieToken);
-    }
-    if (cookieToken) log("WARN", "Cookie token failed validation");
 
     return null;
   }
@@ -427,16 +413,11 @@ export class BrowserAuth {
       const headers: Record<string, string> = {
         "User-Agent":
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        Authorization: `Bearer ${token}`,
       };
 
-      if (token.startsWith("cookie:")) {
-        headers["Cookie"] = token.substring(7);
-      } else {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
       const response = await fetch(
-        `${this.config.baseUrl}/d2l/api/lp/1.45/users/whoami`,
+        `${this.config.baseUrl}${WHOAMI_PATH}`,
         {
           method: "GET",
           headers,
@@ -610,7 +591,7 @@ export class BrowserAuth {
   private async hasLiveSession(page: Page): Promise<boolean> {
     try {
       const response = await page.request.get(
-        `${this.config.baseUrl}/d2l/api/lp/1.45/users/whoami`,
+        `${this.config.baseUrl}${WHOAMI_PATH}`,
         { maxRedirects: 0, timeout: 15000 }
       );
       log("DEBUG", `Session probe (whoami) returned HTTP ${response.status()}`);
@@ -673,111 +654,6 @@ export class BrowserAuth {
       return null;
     } catch (error) {
       log("DEBUG", "localStorage token extraction failed", error);
-      return null;
-    }
-  }
-
-  /**
-   * Try to extract XSRF/API token from D2L's JavaScript context.
-   * Brightspace stores auth tokens in the page's JS globals.
-   */
-  private async extractXsrfToken(page: Page): Promise<string | null> {
-    try {
-      // Navigate back to homepage where D2L JS context is available
-      const currentUrl = page.url();
-      if (!currentUrl.includes("/d2l/home")) {
-        await page.goto(`${this.config.baseUrl}/d2l/home`, {
-          waitUntil: "networkidle",
-          timeout: 15000,
-        });
-      }
-
-      const token = await page.evaluate(() => {
-        // D2L stores XSRF token in various places
-        // Try common D2L token locations
-        const d2l = (window as unknown as Record<string, unknown>).D2L as
-          | Record<string, unknown>
-          | undefined;
-
-        if (d2l) {
-          // Try D2L.LP.Web.Authentication.Xsrf.GetXsrfToken()
-          try {
-            const lp = d2l.LP as Record<string, unknown> | undefined;
-            const web = lp?.Web as Record<string, unknown> | undefined;
-            const auth = web?.Authentication as
-              | Record<string, unknown>
-              | undefined;
-            const xsrf = auth?.Xsrf as Record<string, unknown> | undefined;
-            const getToken = xsrf?.GetXsrfToken as (() => string) | undefined;
-            if (getToken) return getToken();
-          } catch {
-            // Not available
-          }
-        }
-
-        // Try extracting from meta tags or script data
-        const metaToken = document.querySelector(
-          'meta[name="d2l-xsrf-token"]'
-        );
-        if (metaToken) return metaToken.getAttribute("content");
-
-        // Try extracting from local storage
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && (key.includes("token") || key.includes("Token"))) {
-            const val = localStorage.getItem(key);
-            if (val && val.length > 20) return val;
-          }
-        }
-
-        return null;
-      });
-
-      if (token) {
-        log("DEBUG", "Found token via page JavaScript context");
-        return token;
-      }
-
-      return null;
-    } catch (error) {
-      log("DEBUG", "XSRF token extraction failed", error);
-      return null;
-    }
-  }
-
-  /**
-   * Extract D2L session cookies that can be used for cookie-based API auth.
-   * Constructs a cookie header string from d2lSessionVal and d2lSecureSessionVal.
-   */
-  private async extractCookieToken(
-    context: BrowserContext
-  ): Promise<string | null> {
-    try {
-      const cookies = await context.cookies(this.config.baseUrl);
-      const relevantCookies = cookies.filter(
-        (c) =>
-          c.name === "d2lSessionVal" ||
-          c.name === "d2lSecureSessionVal" ||
-          c.name.startsWith("d2l")
-      );
-
-      if (relevantCookies.length === 0) {
-        log("DEBUG", "No D2L session cookies found");
-        return null;
-      }
-
-      // Build a cookie string for API requests
-      const cookieStr = relevantCookies
-        .map((c) => `${c.name}=${c.value}`)
-        .join("; ");
-
-      log(
-        "DEBUG",
-        `Found ${relevantCookies.length} D2L cookies: ${relevantCookies.map((c) => c.name).join(", ")}`
-      );
-      return `cookie:${cookieStr}`;
-    } catch (error) {
-      log("DEBUG", "Cookie extraction failed", error);
       return null;
     }
   }
@@ -896,9 +772,8 @@ export class BrowserAuth {
 
   /**
    * Launch browser with retry logic.
-   * Windows is prone to 180s launch timeouts (Playwright issue #22117) caused by
-   * lingering Chromium processes, antivirus interference, or resource contention.
-   * On timeout, we clear lock files and retry once.
+   * Launch can hang on lingering Chromium processes or a stale SingletonLock
+   * (Playwright issue #22117). On timeout, we clear lock files and retry once.
    */
   private async launchBrowserWithRetry(
     browserDataDir: string,
@@ -912,15 +787,29 @@ export class BrowserAuth {
     // Validate lock files before every launch attempt
     await this.validateAndClearLockFiles(browserDataDir);
 
+    let timer: NodeJS.Timeout | undefined;
+    let abandoned = false;
+    // Wrap in Promise.race so a hung launch (e.g. stale SingletonLock
+    // that wasn't caught) still falls into the retry path
+    const launchPromise = chromium.launchPersistentContext(browserDataDir, options);
+    // If the launch loses the race but completes later, it must not leave a
+    // second live context on the same profile behind the retry.
+    launchPromise.then(
+      (ctx) => {
+        if (abandoned) ctx.close().catch(() => {});
+      },
+      () => {
+        // Surfaced through the race below
+      }
+    );
+
     try {
-      // Wrap in Promise.race so a hung launch (e.g. stale SingletonLock
-      // that wasn't caught) still falls into the retry path
-      const launchPromise = chromium.launchPersistentContext(browserDataDir, options);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Timeout: browser launch hung")), options.timeout)
-      );
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Timeout: browser launch hung")), options.timeout);
+      });
       return await Promise.race([launchPromise, timeoutPromise]);
     } catch (error) {
+      abandoned = true;
       const errMsg = error instanceof Error ? error.message : String(error);
       const isTimeout = errMsg.includes("Timeout") || errMsg.includes("timeout") || errMsg.includes("hung");
 
@@ -957,6 +846,8 @@ export class BrowserAuth {
       }
 
       throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

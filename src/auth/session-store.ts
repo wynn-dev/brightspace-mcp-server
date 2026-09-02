@@ -46,15 +46,9 @@ export class SessionStore {
       return fsSync.readFileSync(saltPath);
     } catch {
       // Salt doesn't exist yet — create session dir and generate one
-      const isWindows = process.platform === "win32";
-      fsSync.mkdirSync(this.sessionDir, {
-        recursive: true,
-        ...(isWindows ? {} : { mode: 0o700 }),
-      });
+      fsSync.mkdirSync(this.sessionDir, { recursive: true, mode: 0o700 });
       const salt = crypto.randomBytes(SALT_LENGTH);
-      fsSync.writeFileSync(saltPath, salt, {
-        ...(isWindows ? {} : { mode: 0o600 }),
-      });
+      fsSync.writeFileSync(saltPath, salt, { mode: 0o600 });
       return salt;
     }
   }
@@ -119,12 +113,8 @@ export class SessionStore {
    */
   async save(token: TokenData): Promise<void> {
     try {
-      // Ensure session directory exists with restricted permissions (owner-only on Unix)
-      const isWindows = process.platform === "win32";
-      await fs.mkdir(this.sessionDir, {
-        recursive: true,
-        ...(isWindows ? {} : { mode: 0o700 }),
-      });
+      // Ensure session directory exists with owner-only permissions
+      await fs.mkdir(this.sessionDir, { recursive: true, mode: 0o700 });
 
       const plaintext = JSON.stringify(token);
       const encrypted = this.encrypt(plaintext);
@@ -139,10 +129,7 @@ export class SessionStore {
       await fs.writeFile(
         this.sessionFilePath,
         JSON.stringify(sessionFile, null, 2),
-        {
-          encoding: "utf-8",
-          ...(isWindows ? {} : { mode: 0o600 }),
-        }
+        { encoding: "utf-8", mode: 0o600 }
       );
 
       log("DEBUG", `Session saved to ${this.sessionFilePath}`);
