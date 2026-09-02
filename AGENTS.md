@@ -3,7 +3,6 @@
 ## When Adding a New Feature
 
 1. Update `README.md` to document the feature
-2. Update the architecture SVG at `docs/how-it-works.svg` if the feature changes how the system works
 
 ## Commit Format
 
