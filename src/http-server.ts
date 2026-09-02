@@ -13,7 +13,6 @@ import { log } from "./utils/logger.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
 import { D2LApiClient } from "./api/index.js";
-import { initUpdateChecker } from "./utils/update-checker.js";
 import { createMcpServer, PKG_VERSION } from "./server.js";
 import { startHttpServer, isLoopbackHost } from "./http/server.js";
 
@@ -64,8 +63,6 @@ async function main(): Promise<void> {
     log("ERROR", "MCP server cannot start without API initialization. Exiting.");
     process.exit(1);
   }
-
-  initUpdateChecker();
 
   const running = await startHttpServer({
     host,

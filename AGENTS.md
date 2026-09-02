@@ -4,7 +4,6 @@
 
 1. Update `README.md` to document the feature
 2. Update the architecture SVG at `docs/how-it-works.svg` if the feature changes how the system works
-3. Bump the version in `package.json` before publishing
 
 ## Commit Format
 
@@ -12,19 +11,16 @@
 
 No Co-Authored-By lines. No phase/plan numbers.
 
-## npm Publishing
+## Distribution
 
-- Auto-publishes via GitHub Actions on push to main (when version in package.json changes)
-- NPM_TOKEN secret in GitHub repo settings (expires Apr 21, 2026)
-- README and description on npm are baked in at publish time, so always publish after README changes
-- The MCP client config uses `npx brightspace-mcp-server@latest` so users auto-update
-- Always bump the version in package.json BEFORE or IN THE SAME COMMIT as any code or docs change. Never push code changes to main without a version bump. If you forget, the GitHub Action will skip publishing and users will not get the update.
+This project is not published to npm. Users clone the repo and run everything through `package.json` scripts (`npm run setup`, `npm run auth`, `npm run start`, `npm run start:http`, `npm run update`). `npm install` builds automatically via the `prepare` script. The setup wizard registers the server in MCP clients as `node <abs path>/build/index.js`.
 
 ## Architecture
 
 - Config store: `~/.brightspace-mcp/config.json` (falls back to `.env`)
 - Session tokens: `~/.d2l-session/session.json` (AES-256-GCM encrypted)
-- Auth: Playwright-based browser login with Duo MFA support
+- Auth: Playwright-based browser login; institution flows in `src/auth/` (`PurdueSSOFlow` with Duo MFA, `TUDelftSSOFlow` with no MFA), selected by `baseUrl`
 - Auto-reauth on token expiry via `AuthRunner`
-- CLI subcommands: `setup`, `auth`, default (MCP server)
-- School presets: `--purdue` flag (extensible via `SCHOOL_PRESETS` in `src/setup.ts`)
+- Transports: stdio (`build/index.js`) and Streamable HTTP (`build/http-server.js`, read-only, no `download_file`); both built by `createMcpServer()` in `src/server.ts`
+- CLI subcommands: `setup`, `auth`, `http`, default (stdio MCP server)
+- School presets: `--purdue`, `--tudelft` (extensible via `SCHOOL_PRESETS` in `src/setup.ts`)

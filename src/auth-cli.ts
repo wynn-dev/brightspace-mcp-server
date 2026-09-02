@@ -95,7 +95,7 @@ async function main(): Promise<void> {
     console.error("\nTroubleshooting tips:");
     if (error instanceof CredentialsRejectedError) {
       console.error("1. Your school's login page rejected the stored username or password");
-      console.error("2. Re-run `npx brightspace-mcp-server setup` (or update D2L_USERNAME / D2L_PASSWORD) with the correct credentials");
+      console.error("2. Re-run `npm run setup` (or update D2L_USERNAME / D2L_PASSWORD) with the correct credentials");
     } else {
       console.error("1. Ensure D2L_USERNAME and D2L_PASSWORD are set correctly in .env");
       console.error("2. If your school uses MFA, make sure you approved the prompt on your phone");
