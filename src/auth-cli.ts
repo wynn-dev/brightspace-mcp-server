@@ -11,12 +11,12 @@ import * as fs from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import dotenv from "dotenv";
+import { loadEnvFiles } from "./utils/env.js";
 import { loadConfig } from "./utils/config.js";
 import { BrowserAuth, CredentialsRejectedError, TokenManager } from "./auth/index.js";
 
-// Load .env file so credentials are available via process.env
-dotenv.config({ quiet: true });
+// Load .env.local / .env so credentials are available via process.env
+loadEnvFiles();
 
 const pkgVersion = (() => {
   try {
