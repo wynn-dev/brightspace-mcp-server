@@ -11,7 +11,6 @@ import { dirname, resolve } from "node:path";
 import type { D2LApiClient } from "./api/index.js";
 import type { TokenManager, AuthRunner } from "./auth/index.js";
 import type { AppConfig } from "./types/index.js";
-import { getUpdateNotice } from "./utils/update-checker.js";
 import { log } from "./utils/logger.js";
 import {
   registerGetMyCourses,
@@ -80,7 +79,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       title: "Check Authentication Status",
       description:
         "Check if you are authenticated with Brightspace. " +
-        "Run the brightspace-auth CLI first to authenticate. " +
+        "Run `npm run auth` first to authenticate. " +
         "Use this when the user asks if they're logged in, if authentication is working, " +
         "or when other tools return auth errors.",
       annotations: { readOnlyHint: true },
@@ -101,18 +100,17 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         if (!token) {
           log("INFO", "check_auth: Auto-reauthentication failed or produced no valid token");
 
-          const content: Array<{ type: "text"; text: string }> = [
-            {
-              type: "text",
-              text:
-                "Not authenticated. Auto-reauthentication was attempted but failed. " +
-                "Please run `brightspace-auth` manually in your terminal to log in. " +
-                "Make sure your credentials in .env are correct and your internet connection is stable.",
-            },
-          ];
-          const notice = getUpdateNotice();
-          if (notice) content.push({ type: "text", text: notice });
-          return { content };
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  "Not authenticated. Auto-reauthentication was attempted but failed. " +
+                  "Please run `npm run auth` in the project directory to log in. " +
+                  "Make sure your stored credentials are correct and your internet connection is stable.",
+              },
+            ],
+          };
         }
 
         log("INFO", "check_auth: Auto-reauthentication succeeded");
@@ -121,15 +119,14 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       const expiresIn = Math.round((token.expiresAt - Date.now()) / 1000 / 60);
       log("INFO", `check_auth: Token valid, expires in ~${expiresIn} minutes`);
 
-      const content: Array<{ type: "text"; text: string }> = [
-        {
-          type: "text",
-          text: `Authenticated with Brightspace. Token expires in ~${expiresIn} minutes. Source: ${token.source}.`,
-        },
-      ];
-      const notice = getUpdateNotice();
-      if (notice) content.push({ type: "text", text: notice });
-      return { content };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Authenticated with Brightspace. Token expires in ~${expiresIn} minutes. Source: ${token.source}.`,
+          },
+        ],
+      };
     }
   );
 

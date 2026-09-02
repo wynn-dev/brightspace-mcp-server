@@ -210,6 +210,18 @@ function getCursorConfigPath(): string {
   return path.join(os.homedir(), ".cursor", "mcp.json");
 }
 
+/**
+ * The command an MCP client should run to start this server: the Node binary
+ * running the setup wizard and the built entry point next to it, both as
+ * absolute paths so the client needs no PATH or working-directory assumptions.
+ */
+function mcpServerCommand(): { command: string; args: string[] } {
+  return {
+    command: process.execPath,
+    args: [path.resolve(thisDir, "index.js")],
+  };
+}
+
 function configureMcpClient(configPath: string): boolean {
   let config: McpConfig = { mcpServers: {} };
 
@@ -230,17 +242,7 @@ function configureMcpClient(configPath: string): boolean {
   }
 
   // Add/update brightspace entry
-  // On Windows, npx is a .cmd shim that must be invoked through cmd.exe
-  const isWindows = process.platform === "win32";
-  config.mcpServers["brightspace"] = isWindows
-    ? {
-        command: "cmd",
-        args: ["/c", "npx", "-y", "brightspace-mcp-server@latest"],
-      }
-    : {
-        command: "npx",
-        args: ["-y", "brightspace-mcp-server@latest"],
-      };
+  config.mcpServers["brightspace"] = mcpServerCommand();
 
   // Ensure parent directory exists
   const dir = path.dirname(configPath);
@@ -387,10 +389,10 @@ async function main(): Promise<void> {
     if (ok) {
       console.log(green("\n  Authentication successful!"));
     } else {
-      console.log(yellow("\n  Authentication failed. You can retry later with: brightspace-auth"));
+      console.log(yellow("\n  Authentication failed. You can retry later with: npm run auth"));
     }
   } else {
-    console.log(dim("  You can authenticate later by running: brightspace-auth"));
+    console.log(dim("  You can authenticate later by running: npm run auth"));
   }
   console.log("");
 
@@ -437,10 +439,7 @@ async function main(): Promise<void> {
 
   // ── Step 9: ChatGPT Desktop instructions ─────────────────────────
   if (isChatGPTInstalled()) {
-    const isWindows = process.platform === "win32";
-    const mcpJson = isWindows
-      ? `{\n  "command": "cmd",\n  "args": ["/c", "npx", "-y", "brightspace-mcp-server@latest"]\n}`
-      : `{\n  "command": "npx",\n  "args": ["-y", "brightspace-mcp-server@latest"]\n}`;
+    const mcpJson = JSON.stringify(mcpServerCommand(), null, 2);
     console.log(yellow("  ChatGPT Desktop detected."));
     console.log(dim("  ChatGPT doesn't support automatic MCP config — add it manually:"));
     console.log(dim("  1. Open ChatGPT Desktop → Settings → Tools → Add MCP tool → Add manually"));
@@ -458,9 +457,12 @@ async function main(): Promise<void> {
   console.log(`  Config saved to: ${dim(getConfigStorePath())}`);
   console.log("");
   console.log("  Next steps:");
-  console.log("  1. Run 'brightspace-auth' to authenticate (if you haven't already)");
+  console.log("  1. Run 'npm run auth' to authenticate (if you haven't already)");
   console.log("  2. Restart Claude Desktop");
   console.log("  3. Ask Claude about your Brightspace courses!");
+  console.log("");
+  console.log("  Other clients: register this command as an MCP server:");
+  console.log(`  ${JSON.stringify(mcpServerCommand())}`);
   console.log("");
 }
 

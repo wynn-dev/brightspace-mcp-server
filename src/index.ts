@@ -12,7 +12,6 @@ import { enableStdoutGuard, log } from "./utils/logger.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
 import { D2LApiClient } from "./api/index.js";
-import { initUpdateChecker } from "./utils/update-checker.js";
 import { createMcpServer, PKG_VERSION } from "./server.js";
 
 // ── Subcommand routing (before any MCP initialization) ──────────────
@@ -71,9 +70,6 @@ if (subcommand === 'setup') {
         log("ERROR", "MCP server cannot start without API initialization. Exiting.");
         process.exit(1);
       }
-
-      // Start background update check (fire and forget)
-      initUpdateChecker();
 
       // Log active course filter config if any filter is set
       if (config.courseFilter.includeCourseIds || config.courseFilter.excludeCourseIds || !config.courseFilter.activeOnly) {

@@ -4,13 +4,13 @@ Guide for AI agents (Claude, Cursor, Windsurf, Copilot, Codex, etc.) helping a u
 
 ## Read the README first
 
-Before anything else, read [README.md](https://github.com/RohanMuppa/brightspace-mcp-server/blob/main/README.md) for general context on what this project is, who it's for, and what a user can do with it. This file (LLMs.md) picks up from there with the concrete steps and codebase map you'll need to actually get things done.
+Before anything else, read `README.md` for general context on what this project is, who it's for, and what a user can do with it. This file (LLMs.md) picks up from there with the concrete steps and codebase map you'll need to actually get things done.
 
 ## What this project is
 
 An MCP (Model Context Protocol) server that connects an AI client to D2L Brightspace so it can read grades, assignments, announcements, syllabus, roster, discussions, and course content on demand.
 
-Distributed on npm as `brightspace-mcp-server`. Users run it via `npx`, so they always get the latest version.
+It is run from a git clone — nothing is published to npm. Every user-facing action is a `package.json` script.
 
 ## Installing it for a user
 
@@ -24,54 +24,63 @@ node --version
 
 If Node is missing or below v18, tell the user to install the LTS from https://nodejs.org/ and stop.
 
-### 2. Run the setup wizard
+### 2. Clone and install
 
 ```bash
-npx brightspace-mcp-server setup
+git clone <repo url> brightspace-mcp-server
+cd brightspace-mcp-server
+npm install
 ```
 
-If the user is at Purdue, use the preset:
+`npm install` also downloads Chromium for Playwright and compiles TypeScript into `build/` (via the `prepare` script). On Linux, install Chromium's system libraries once with `npm run playwright:deps`.
+
+### 3. Run the setup wizard
 
 ```bash
-npx brightspace-mcp-server setup --purdue
+npm run setup
+```
+
+School presets skip the URL prompt:
+
+```bash
+npm run setup -- --purdue
+npm run setup -- --tudelft
 ```
 
 The wizard:
-- prompts for the school's Brightspace URL (skipped with `--purdue`)
-- launches a Playwright Chromium browser for login and MFA (Duo push, etc.)
+- prompts for the school's Brightspace URL (skipped with a preset)
 - saves credentials to `~/.brightspace-mcp/config.json` (0600)
-- writes the encrypted session to `~/.d2l-session/session.json` (AES-256-GCM)
-- auto-configures Claude Desktop and Cursor if detected
+- optionally logs in right away with a Playwright Chromium browser (Duo push for Purdue; fully automatic for TU Delft) and writes the encrypted session to `~/.d2l-session/session.json` (AES-256-GCM)
+- auto-configures Claude Desktop and Cursor if detected, registering `node <abs path>/build/index.js`
 
 Wait for the user to finish login and MFA before continuing.
 
-### 3. Register the MCP server in the user's AI client
+### 4. Register the MCP server in the user's AI client
 
-The server command to register is:
+Claude Desktop and Cursor are auto-configured by the wizard. For any other client (Windsurf, Copilot, Codex, Zed, Continue, etc.), register a stdio server with:
 
-```
-npx -y brightspace-mcp-server@latest
-```
+- command: the absolute path to `node`
+- args: the absolute path to `build/index.js` inside the clone
 
-On **Windows**, wrap with cmd: `cmd /c npx -y brightspace-mcp-server@latest`.
+The wizard prints this exact JSON at the end. Config formats and paths differ per client and change over time, so verify against current client docs rather than guessing.
 
-Claude Desktop and Cursor are auto-configured by the setup wizard. For any other client (Windsurf, Copilot, Codex, Zed, Continue, etc.), look up the client's current MCP config format and file path, then add an entry with the command above. Config formats and paths differ per client and change over time, so verify against current client docs rather than guessing.
+For a client on another machine, run `npm run start:http` instead and point the client at `http://<host>:8787/mcp` with an `Authorization: Bearer <MCP_AUTH_TOKEN>` header (see README "Remote Access").
 
-### 4. Restart the AI client
+### 5. Restart the AI client
 
 Tell the user to fully quit and reopen their AI client so it picks up the new MCP server.
 
 ## Re-auth
 
-Sessions auto-reauthenticate on expiry. If auto-reauth fails (missed Duo push, expired cookies, stale locks), run:
+Sessions auto-reauthenticate on expiry. If auto-reauth fails (missed Duo push, expired cookies, stale locks), run in the clone:
 
 ```bash
-npx brightspace-mcp-server auth
+npm run auth
 ```
 
 ## Available tools
 
-Registered in `src/tools/index.ts`, schemas in `src/tools/schemas.ts`:
+Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/schemas.ts`:
 
 | Tool | Purpose |
 |------|---------|
@@ -85,16 +94,19 @@ Registered in `src/tools/index.ts`, schemas in `src/tools/schemas.ts`:
 | `get_discussions` | Discussion forums and recent posts |
 | `get_roster` | Classlist for a course |
 | `get_classlist_emails` | Emails of classmates and instructors |
-| `download_file` | Download a file attachment (PDF, slides, etc.) |
+| `download_file` | Download a file attachment (PDF, slides, etc.) — stdio only |
 
 ## Codebase map
 
 ```
 src/
-  index.ts                  MCP server entrypoint, registers tools
-  setup.ts                  Setup wizard (CLI subcommand `setup`)
-  auth-cli.ts               Manual reauth (CLI subcommand `auth`)
-  update.ts                 Self-update checker
+  index.ts                  stdio MCP entrypoint + subcommand routing (setup / auth / http)
+  server.ts                 createMcpServer(): tool registration shared by both transports
+  http-server.ts            Streamable HTTP entrypoint (read-only, bearer auth)
+  http/server.ts            HTTP transport: sessions, auth, DNS-rebinding protection
+  setup.ts                  Setup wizard (`npm run setup`)
+  auth-cli.ts               Manual reauth (`npm run auth`)
+  update.ts                 git-pull self-updater (`npm run update`)
   tools/
     index.ts                Tool registry
     schemas.ts              Zod input schemas for every tool
@@ -110,8 +122,10 @@ src/
     types.ts                D2L response types
   auth/
     auth-runner.ts          Orchestrates reauth on 401/expiry
-    browser-auth.ts         Playwright-driven login flow
-    purdue-sso.ts           Purdue-specific SSO handler
+    browser-auth.ts         Playwright-driven login + token extraction
+    sso-flow.ts             SSOFlow interface / BaseSSOFlow
+    purdue-sso.ts           Purdue Shibboleth + Duo flow
+    tudelft-sso.ts          TU Delft SURFconext / SimpleSAMLphp flow
     session-store.ts        AES-256-GCM session persistence
     token-manager.ts        Token refresh and validation
   utils/
@@ -123,7 +137,6 @@ src/
     html-converter.ts       HTML to Markdown via turndown
     pdf-extractor.ts        PDF text extraction via unpdf
     logger.ts               Structured logging
-    update-checker.ts       npm version comparison
     errors.ts               User-facing error taxonomy
   types/                    Shared TypeScript types
 ```
@@ -132,37 +145,34 @@ src/
 
 | Command | What it does |
 |---------|--------------|
-| `npx brightspace-mcp-server setup` | Interactive setup wizard |
-| `npx brightspace-mcp-server setup --purdue` | Setup with Purdue preset |
-| `npx brightspace-mcp-server auth` | Manual reauth |
-| `npx -y brightspace-mcp-server@latest` | Run the MCP server (registered in AI client config) |
+| `npm install` | Install deps, download Chromium, build |
+| `npm run setup` | Interactive setup wizard (`-- --purdue` / `-- --tudelft` for presets) |
+| `npm run auth` | Manual reauth |
+| `npm run start` | Run the stdio MCP server (what AI clients invoke via `node build/index.js`) |
+| `npm run start:http` | Run the Streamable HTTP server |
+| `npm run update` | `git pull` + install + build |
 | `npm run build` | Compile TypeScript to `build/` |
 | `npm run dev` | Watch-mode TypeScript compile |
 | `npm run test` | Run Vitest suite |
 | `npm run test:run` | Run Vitest once |
+| `npm run playwright:deps` | Install Chromium system libraries (Linux) |
 
 ## Storage locations
 
 | Path | Contents | Permissions |
 |------|----------|-------------|
-| `~/.brightspace-mcp/config.json` | School URL, user identity | 0600 |
+| `~/.brightspace-mcp/config.json` | School URL, credentials | 0600 |
 | `~/.d2l-session/session.json` | Encrypted session cookies | 0600 |
 
 `.env` fallback is supported for CI and dev, but the config store takes precedence.
 
 ## Adding a school
 
-Add a preset to `SCHOOL_PRESETS` in `src/setup.ts`. If the school uses a non-standard login flow (SAML, Shibboleth, custom SSO), add a handler in `src/auth/` alongside `purdue-sso.ts`.
+Add a preset to `SCHOOL_PRESETS` in `src/setup.ts`. If the school uses a non-standard login flow (SAML, Shibboleth, custom SSO), add an `SSOFlow` in `src/auth/` alongside `tudelft-sso.ts` and select it in `BrowserAuth`'s constructor.
 
 ## Adding a tool
 
-1. Create `src/tools/<name>.ts` using an existing tool as a template.
+1. Create `src/tools/<name>.ts` using an existing tool as a template (include `annotations: { readOnlyHint: true }` if it only reads).
 2. Add the input schema to `src/tools/schemas.ts`.
 3. Export it from `src/tools/index.ts`.
-4. Register it in `src/index.ts`.
-
-## Release workflow
-
-Publishing is automated by GitHub Actions on push to `main` when `version` in `package.json` changes.
-
-Always bump `version` in `package.json` in the same commit as any code or docs change. The Action skips publish if the version is unchanged, which means users will not receive the update via `npx ...@latest`.
+4. Register it in `createMcpServer()` in `src/server.ts`.

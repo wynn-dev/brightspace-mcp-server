@@ -16,8 +16,8 @@ import { log } from "../utils/logger.js";
 const AUTH_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 
 /**
- * Launches the brightspace-auth CLI as a child process to
- * re-authenticate when the current session has expired.
+ * Launches the auth CLI (build/auth-cli.js, i.e. `npm run auth`) as a child
+ * process to re-authenticate when the current session has expired.
  *
  * The child process inherits the parent's environment (so .env credentials
  * are available via dotenv in the auth CLI) and runs with the project root
@@ -48,7 +48,7 @@ export class AuthRunner {
 
     this.running = true;
     try {
-      log("INFO", "Auto-launching brightspace-auth...");
+      log("INFO", "Auto-launching auth CLI for re-authentication...");
 
       return await new Promise<boolean>((resolve) => {
         execFile(

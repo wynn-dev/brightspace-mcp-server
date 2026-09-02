@@ -57,7 +57,7 @@ export function sanitizeError(error: unknown): CallToolResult {
     if (error.status === 401) {
       return errorResponse(
         "Authentication expired. Auto-reauthentication was attempted but failed. " +
-        "Please run `brightspace-auth` manually in your terminal, then try again."
+        "Please run `npm run auth` in the project directory, then try again."
       );
     }
     if (error.status === 403) {

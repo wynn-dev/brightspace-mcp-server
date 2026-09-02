@@ -1,32 +1,23 @@
 {
   "name": "brightspace-mcp-server",
   "version": "1.2.8",
-  "mcpName": "io.github.rohanmuppa/brightspace",
+  "private": true,
   "description": "MCP server for Brightspace (D2L). Check grades, due dates, assignments, announcements, syllabus, rosters and more via Claude, ChatGPT, Cursor, Windsurf, or any MCP client.",
   "type": "module",
   "main": "build/index.js",
-  "bin": {
-    "brightspace-mcp-server": "build/index.js",
-    "brightspace-mcp-http": "build/http-server.js",
-    "brightspace-auth": "build/auth-cli.js",
-    "brightspace-setup": "build/setup.js"
-  },
-  "files": [
-    "build",
-    "README.md",
-    "LICENSE"
-  ],
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
+    "postinstall": "playwright install chromium",
+    "playwright:deps": "playwright install-deps chromium",
+    "setup": "node build/setup.js",
+    "auth": "node build/auth-cli.js",
     "start": "node build/index.js",
     "start:http": "node build/http-server.js",
-    "auth": "node build/auth-cli.js",
     "update": "node build/update.js",
     "dev": "tsc --watch",
     "test": "vitest",
-    "test:run": "vitest run",
-    "postinstall": "npx playwright install chromium"
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -51,39 +42,12 @@
   },
   "license": "MIT",
   "author": "Rohan Muppa",
-  "homepage": "https://github.com/RohanMuppa/brightspace-mcp-server",
+  "homepage": "https://github.com/wynn-dev/brightspace-mcp-server",
   "repository": {
     "type": "git",
-    "url": "https://github.com/RohanMuppa/brightspace-mcp-server.git"
+    "url": "https://github.com/wynn-dev/brightspace-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/RohanMuppa/brightspace-mcp-server/issues"
-  },
-  "keywords": [
-    "mcp",
-    "mcp-server",
-    "brightspace",
-    "d2l",
-    "lms",
-    "education",
-    "grades",
-    "courses",
-    "claude",
-    "chatgpt",
-    "cursor",
-    "windsurf",
-    "purdue",
-    "university",
-    "model-context-protocol",
-    "brightspace-api",
-    "d2l-api",
-    "assignments",
-    "announcements",
-    "syllabus",
-    "student",
-    "ai",
-    "duo",
-    "sso",
-    "d2l-brightspace"
-  ]
+    "url": "https://github.com/wynn-dev/brightspace-mcp-server/issues"
+  }
 }

@@ -333,7 +333,7 @@ export class BrowserAuth {
         }
       }
       if (BrowserAuth.isWSLOrDocker() && (errMsg.includes("spawn") || errMsg.includes("ENOENT") || errMsg.includes("sandbox"))) {
-        hint = " (WSL/Docker hint: ensure Chromium dependencies are installed. Run: npx playwright install-deps chromium)";
+        hint = " (WSL/Docker hint: ensure Chromium dependencies are installed. Run: npm run playwright:deps)";
       }
 
       throw new BrowserAuthError(
