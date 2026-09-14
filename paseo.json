@@ -1,0 +1,13 @@
+{
+  "worktree": {
+    "setup": [
+      "node scripts/paseo-copy-env.mjs",
+      "pnpm install --frozen-lockfile"
+    ]
+  },
+  "scripts": {
+    "build": { "command": "pnpm run build" },
+    "test": { "command": "pnpm run test:run" },
+    "dev": { "command": "pnpm run dev" }
+  }
+}

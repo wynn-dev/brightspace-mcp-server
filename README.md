@@ -109,6 +109,16 @@ Set in `~/.brightspace-mcp/config.json` (written by the wizard), or as environme
 
 ## Contributing
 
+### Paseo workspaces
+
+The repo includes [`paseo.json`](paseo.json) for [Paseo worktrees](https://paseo.sh/docs/worktrees). Install Node.js 22+ and enable pnpm with `corepack enable` on the Paseo host first. New worktrees first copy `.env` and `.env.local` from `PASEO_SOURCE_CHECKOUT_PATH` when present, preserving any existing worktree files. Setup then runs `pnpm install --frozen-lockfile`, which downloads Chromium and builds the server through the existing install hooks.
+
+Paseo also offers `build`, `test` (a single test run), and `dev` (TypeScript watch) scripts. For example, run `paseo script start test` from the workspace directory.
+
+Brightspace login remains a manual step: run `pnpm run setup` when needed. Worktrees on the same host share the home-directory config and session stores. Linux hosts that need Chromium system libraries can run `pnpm run playwright:deps` once.
+
+Paseo reads this config from the committed base branch, so commit it to the branch used to create new worktrees before expecting automatic setup.
+
 **Add your school:** add a preset to `SCHOOL_PRESETS` in `src/setup.ts`. If its login flow differs, add an `SSOFlow` in `src/auth/` (see `tudelft-sso.ts`) and select it in `BrowserAuth`.
 
 **Add a tool:** create a file in `src/tools/`, add its schema to `schemas.ts`, export it from `src/tools/index.ts`, and register it in `createMcpServer()` in `src/server.ts`. Mark read-only tools with `annotations: { readOnlyHint: true }`.
