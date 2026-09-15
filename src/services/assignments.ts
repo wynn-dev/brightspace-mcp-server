@@ -76,7 +76,7 @@ export async function fetchCourseAssignments(api: D2LApiClient, courseId: number
       const scores = own.map(a => a.score).filter((s): s is number => s !== null);
       assignments.push({ type: kind, id: quizId, name: str(r.Name), instructions: richText(r.Instructions) || richText(r.Description),
         dueDate: str(r.DueDate), startDate: str(r.StartDate), endDate: str(r.EndDate), gradeItemId: id(r.GradeItemId),
-        state: !attempts?.complete ? "unknown" : own.some(a => a.completed) ? "attempt_completed" : own.length ? "in_progress" : "not_started",
+        state: !attempts?.complete ? "unknown" : own.some(a => !a.completed) ? "in_progress" : own.length ? "attempt_completed" : "not_started",
         timeLimit: timing.IsEnforced === true ? num(timing.TimeLimitValue) : null, isSynchronous: r.IsSynchronous === true,
         attemptsAllowed: allowed.IsUnlimited === true ? "Unlimited" : num(allowed.NumberOfAttemptsAllowed),
         attemptsUsed: attempts?.complete ? own.length : null, attemptsRemaining: null,

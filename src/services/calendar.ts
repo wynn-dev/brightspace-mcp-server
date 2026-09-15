@@ -23,12 +23,12 @@ export async function fetchCalendar(api: D2LApiClient, courseIds: number[], star
       return { id: event.CalendarEventId ?? null, recurrenceId: instance.RecurrenceId ?? null, courseId: id(event.OrgUnitId),
         courseName: str(event.OrgUnitName), title: str(event.Title), description: richText(event.Description),
         eventType: num(event.EventType), kind: TYPES[Number(event.EventType)] ?? "unknown", startDate, endDate,
-        isAllDay: instance.IsAllDayEvent ?? event.IsAllDayEvent ?? null, startDay: instance.StartDay ?? event.StartDay ?? null,
-        endDayExclusive: instance.EndDay ?? event.EndDay ?? null, localStart: local(startDate), localEnd: local(endDate),
+        isAllDay: instance.IsAllDayEvent ?? event.IsAllDayEvent ?? null, startDay: instance.StartDay ?? null,
+        endDayExclusive: instance.EndDay ?? null, localStart: local(startDate), localEnd: local(endDate),
         isRecurring: event.IsRecurring ?? null, recurrence: object(event.RecurrenceInfo),
         location: str(event.LocationName), associatedEntity: associated, sourceUrl: str(event.CalendarEventViewUrl) ?? str(associated.Link) };
     });
   }).filter(e => e.courseId === null || courseIds.includes(e.courseId))
     .sort((a, b) => String(a.startDate ?? a.startDay ?? "").localeCompare(String(b.startDate ?? b.startDay ?? "")));
-  return { status: result.status, events, recurrenceExpanded, timeZone };
+  return { status: result.status, events, recurrenceExpanded: recurrenceExpanded && result.complete, timeZone };
 }

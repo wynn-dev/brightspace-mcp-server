@@ -10,10 +10,9 @@ import { defineTool, type ToolBody } from "./define-tool.js";
 import { toolResponse, errorResponse } from "./tool-helpers.js";
 import { convertHtmlToMarkdown } from "../utils/html-converter.js";
 import { secureDownload } from "../utils/download-helpers.js";
-import { MAX_FILE_SIZE } from "../utils/file-validator.js";
 import { extractPdfText } from "../utils/pdf-extractor.js";
 import { isErrnoException } from "../utils/errors.js";
-import { ContentReadError, readContentBytes } from "../utils/content-reader.js";
+import { ContentReadError, contentFilename, readContentBytes } from "../utils/content-reader.js";
 import { log } from "../utils/logger.js";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -72,12 +71,13 @@ const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
 
     const description = overview?.Description?.Html
       ? convertHtmlToMarkdown(overview.Description.Html)
-      : null;
+      : overview?.Description?.Text ? { markdown: overview.Description.Text, html: "" } : null;
 
     // Always attempt to fetch the attachment so we can extract PDF text
     let attachmentBuffer: Buffer | null = null;
     let attachmentFilename = "syllabus";
-    let hasAttachment = false;
+    let hasAttachment: boolean | null = null;
+    let attachmentContentType = "";
 
     try {
       const response = await apiClient.getRaw(apiClient.le(courseId, "/overview/attachment"));
@@ -85,25 +85,9 @@ const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
       if (response.ok) {
         hasAttachment = true;
 
-        const contentLength = parseInt(response.headers.get("Content-Length") ?? "0", 10);
-        if (contentLength > MAX_FILE_SIZE) {
-          return errorResponse(
-            `Attachment too large (${Math.round(contentLength / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
-          );
-        }
-
-        const disposition = response.headers.get("Content-Disposition") ?? "";
-        const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-        if (match?.[1]) {
-          attachmentFilename = match[1].replace(/['"]/g, "");
-        }
-
+        attachmentContentType = response.headers.get("Content-Type") ?? "";
+        attachmentFilename = contentFilename(response.headers.get("Content-Disposition") ?? "", "syllabus");
         attachmentBuffer = await readContentBytes(response);
-        if (attachmentBuffer.length > MAX_FILE_SIZE) {
-          return errorResponse(
-            `Attachment too large (${Math.round(attachmentBuffer.length / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
-          );
-        }
       }
     } catch (error) {
       if (error instanceof ContentReadError) return errorResponse(error.message);
@@ -116,7 +100,9 @@ const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
 
     let syllabusText: string | null = null;
     let totalPages: number | undefined;
-    if (attachmentBuffer && attachmentFilename.toLowerCase().endsWith(".pdf")) {
+    if (attachmentBuffer && (attachmentFilename.toLowerCase().endsWith(".pdf") ||
+      attachmentContentType.split(";", 1)[0].trim().toLowerCase() === "application/pdf" ||
+      attachmentBuffer.subarray(0, 1024).includes(Buffer.from("%PDF-")))) {
       const extracted = await extractPdfText(attachmentBuffer);
       if (extracted) {
         syllabusText = extracted.text;

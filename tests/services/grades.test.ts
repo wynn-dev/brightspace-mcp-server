@@ -33,6 +33,8 @@ describe("verified grade projections", () => {
     ["bonus", { objects: [{ ...objects[0], IsBonus: true }, objects[1]] }],
     ["hidden item", { objects: [{ ...objects[0], IsHidden: true }, objects[1]] }],
     ["unknown exemptions", { exemptions: null }],
+    ["duplicate published values", { values: [values[0], { ...values[0], PointsNumerator: 1 }] }],
+    ["conflicting exemptions", { exemptions: [...exemptions, { ...exemptions[0], IsExempt: true }] }],
     ["truncated data", { complete: false }],
     ["invalid weight sum", { setup: { ...setup, GradingSystem: "Weighted" }, objects: [item(1, 10, 10), item(2, 20, 10)] }],
     ["unknown scenario item", { scenarios: [{ gradeItemId: 77, points: 1 }] }],

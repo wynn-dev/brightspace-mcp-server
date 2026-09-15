@@ -81,14 +81,16 @@ export async function getAllLpPages<T>(
     if (visited.has(pagePath)) { options.onIncomplete?.(); recordLimit(`Repeated pagination page: ${label}`); break; }
     visited.add(pagePath);
     let result: LpPagedResult<T>;
-    try { result = await client.get<LpPagedResult<T>>(pagePath, { ttl }); }
+    try {
+      result = await client.get<LpPagedResult<T>>(pagePath, { ttl });
+      if (!Array.isArray(result?.Items)) throw new Error(`Invalid paged response: ${label}`);
+    }
     catch (error) {
       if (!items.length) throw error;
       recordRead(pagePath, errorState(error));
       options.onIncomplete?.(); recordLimit(`Later page unavailable: ${label}`);
       break;
     }
-    if (!Array.isArray(result?.Items)) throw new Error(`Invalid paged response: ${label}`);
     items.push(...(result.Items ?? []));
 
     const bookmark = result.PagingInfo?.HasMoreItems ? result.PagingInfo.Bookmark : null;
@@ -126,14 +128,16 @@ export async function getAllObjectListPages<T>(
     if (visited.has(pagePath)) { options.onIncomplete?.(); recordLimit(`Repeated pagination page: ${label}`); break; }
     visited.add(pagePath);
     let result: ObjectListPage<T> | T[];
-    try { result = await client.get<ObjectListPage<T> | T[]>(pagePath, { ttl }); }
+    try {
+      result = await client.get<ObjectListPage<T> | T[]>(pagePath, { ttl });
+      if (!Array.isArray(result) && !Array.isArray(result?.Objects)) throw new Error(`Invalid paged response: ${label}`);
+    }
     catch (error) {
       if (!items.length) throw error;
       recordRead(pagePath, errorState(error));
       options.onIncomplete?.(); recordLimit(`Later page unavailable: ${label}`);
       break;
     }
-    if (!Array.isArray(result) && !Array.isArray(result?.Objects)) throw new Error(`Invalid paged response: ${label}`);
     items.push(...unwrapObjects(result));
 
     const next = Array.isArray(result) ? null : result.Next ?? null;
@@ -144,7 +148,13 @@ export async function getAllObjectListPages<T>(
       warnCapped(maxPages, label);
       break;
     }
-    const nextPath = nextToPath(next);
+    let nextPath: string;
+    try {
+      if (typeof next !== "string") throw new Error("Invalid continuation URL");
+      nextPath = nextToPath(next);
+    } catch {
+      options.onIncomplete?.(); recordLimit(`Invalid pagination continuation: ${label}`); break;
+    }
     // Defensive: a server echoing the current page would loop until maxPages
     if (nextPath === pagePath) { options.onIncomplete?.(); recordLimit(`Repeated pagination page: ${label}`); break; }
     pagePath = nextPath;

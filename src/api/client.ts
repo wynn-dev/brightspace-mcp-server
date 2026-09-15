@@ -32,17 +32,19 @@ export class D2LApiClient {
   private readonly timeoutMs: number;
   private readonly onAuthExpired?: () => Promise<boolean>;
   private versions: ApiVersions | null = null;
+  private authRecovery: Promise<TokenData> | null = null;
 
   constructor(options: D2LApiClientOptions) {
     // HTTPS-only enforcement
-    if (options.baseUrl.startsWith("http://")) {
+    const baseUrl = new URL(options.baseUrl);
+    if (baseUrl.protocol !== "https:") {
       throw new Error(
         "HTTPS is required for D2L API client. HTTP URLs are not allowed for security reasons.",
       );
     }
 
     // Strip trailing slash from baseUrl
-    this.baseUrl = options.baseUrl.replace(/\/$/, "");
+    this.baseUrl = baseUrl.href.replace(/\/$/, "");
     this.tokenManager = options.tokenManager;
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.onAuthExpired = options.onAuthExpired;
@@ -123,20 +125,11 @@ export class D2LApiClient {
     // Get authentication token — auto-reauth if expired
     let token = await this.tokenManager.getToken();
     if (!token) {
-      token = await this.tryAutoReauth(path);
+      token = await this.recoverToken(path, null);
     }
 
     // Make request with retry logic
-    try {
-      return await this.makeRequest<T>(path, token, options);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        // Final attempt: auto-reauth and retry once
-        const freshToken = await this.tryAutoReauth(path);
-        return await this.makeRequest<T>(path, freshToken, options);
-      }
-      throw error;
-    }
+    return this.makeRequest<T>(path, token, options);
   }
 
   /**
@@ -168,20 +161,24 @@ export class D2LApiClient {
     // Get authentication token — auto-reauth if expired
     let token = await this.tokenManager.getToken();
     if (!token) {
-      token = await this.tryAutoReauth(path);
+      token = await this.recoverToken(path, null);
     }
 
     // Make request with retry logic
-    try {
-      return await this.makeRawRequest(path, token);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        // Final attempt: auto-reauth and retry once
-        const freshToken = await this.tryAutoReauth(path);
-        return await this.makeRawRequest(path, freshToken);
-      }
-      throw error;
-    }
+    return this.makeRawRequest(path, token);
+  }
+
+  /** Serialize invalidation with login so late 401s cannot erase a new session. */
+  private recoverToken(path: string, rejected: TokenData | null, allowLogin = true): Promise<TokenData> {
+    if (this.authRecovery) return this.authRecovery;
+    this.authRecovery = (async () => {
+      const current = await this.tokenManager.getToken();
+      if (current && current.accessToken !== rejected?.accessToken) return current;
+      if (rejected) await this.tokenManager.clearToken();
+      if (!allowLogin) throw new ApiError(401, path, "Refreshed session was rejected.");
+      return this.tryAutoReauth(path);
+    })().finally(() => { this.authRecovery = null; });
+    return this.authRecovery;
   }
 
   /**
@@ -225,34 +222,11 @@ export class D2LApiClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 
-      // Handle 401 with retry logic
+      // At most one retry per request; all readers share invalidation and login.
       if (response.status === 401) {
-        if (isRetry) {
-          // Second 401 - clear token and throw
-          log("DEBUG", "Second 401 response, clearing token");
-          await this.tokenManager.clearToken();
-          throw new ApiError(
-            401,
-            path,
-            "Session expired. Please re-authenticate with `pnpm run auth`.",
-          );
-        }
-
-        // First 401 - try to get fresher token
-        log("DEBUG", "First 401 response, attempting retry with fresh token");
-        const freshToken = await this.tokenManager.getToken();
-
-        if (!freshToken || freshToken.accessToken === token.accessToken) {
-          // No fresher token available
-          await this.tokenManager.clearToken();
-          throw new ApiError(
-            401,
-            path,
-            "Session expired. Please re-authenticate with `pnpm run auth`.",
-          );
-        }
-
-        // Retry with fresh token
+        await response.body?.cancel();
+        const freshToken = await this.recoverToken(path, token, !isRetry);
+        if (isRetry) throw new ApiError(401, path, "Refreshed session was rejected.");
         return await this.makeRequest<T>(path, freshToken, options, true);
       }
 
@@ -323,34 +297,11 @@ export class D2LApiClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
 
-      // Handle 401 with retry logic
+      // At most one retry per request; all readers share invalidation and login.
       if (response.status === 401) {
-        if (isRetry) {
-          // Second 401 - clear token and throw
-          log("DEBUG", "Second 401 response, clearing token");
-          await this.tokenManager.clearToken();
-          throw new ApiError(
-            401,
-            path,
-            "Session expired. Please re-authenticate with `pnpm run auth`.",
-          );
-        }
-
-        // First 401 - try to get fresher token
-        log("DEBUG", "First 401 response, attempting retry with fresh token");
-        const freshToken = await this.tokenManager.getToken();
-
-        if (!freshToken || freshToken.accessToken === token.accessToken) {
-          // No fresher token available
-          await this.tokenManager.clearToken();
-          throw new ApiError(
-            401,
-            path,
-            "Session expired. Please re-authenticate with `pnpm run auth`.",
-          );
-        }
-
-        // Retry with fresh token
+        await response.body?.cancel();
+        const freshToken = await this.recoverToken(path, token, !isRetry);
+        if (isRetry) throw new ApiError(401, path, "Refreshed session was rejected.");
         return await this.makeRawRequest(path, freshToken, true);
       }
 

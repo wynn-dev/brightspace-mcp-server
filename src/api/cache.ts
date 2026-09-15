@@ -27,6 +27,7 @@ export class TTLCache<T = unknown> {
     const timerId = setTimeout(() => {
       this.cache.delete(key);
     }, ttlMs);
+    timerId.unref();
 
     // Store entry
     this.cache.set(key, { data: value, timerId, storedAt: new Date().toISOString() });

@@ -15,7 +15,7 @@ describe("calendar and work overview", () => {
   const event = { CalendarEventId: "1", OrgUnitId: 5, Title: "Deadline", EventType: 6,
     StartDateTime: "2026-09-16T09:00:00Z", EndDateTime: "2026-09-16T09:00:00Z", LocationName: "Room 2", AssociatedEntity: { Link: "/activity" } };
   it("expands occurrences, classifies availability and preserves exclusive all-day end dates", async () => {
-    const api = fakeApiClient({ "/myEventsWithOccurrences/": objectPage([{ EventDataInfo: { ...event, EventType: 2 }, Occurrences: [
+    const api = fakeApiClient({ "/myEventsWithOccurrences/": objectPage([{ EventDataInfo: { ...event, EventType: 2, StartDay: "2026-08-01", EndDay: "2026-08-02" }, Occurrences: [
       { RecurrenceId: "r1", StartDateTime: "2026-09-17T09:00:00Z", EndDateTime: "2026-09-17T10:00:00Z", IsAllDayEvent: false },
       { RecurrenceId: "r2", IsAllDayEvent: true, StartDay: "2026-09-18", EndDay: "2026-09-19" },
     ] }]) });
@@ -24,7 +24,7 @@ describe("calendar and work overview", () => {
     expect(sent.get("startDateTime")).toBe("2026-09-01T00:00:00.000Z");
     expect(sent.get("endDateTime")).toBe("2026-09-30T00:00:00.000Z");
     expect(r.recurrenceExpanded).toBe(true); expect(r.items).toHaveLength(2);
-    expect(r.items.find((e: any) => e.recurrenceId === "r1")).toMatchObject({ kind: "availability_start", localStart: "17/09/2026, 11:00", location: "Room 2" });
+    expect(r.items.find((e: any) => e.recurrenceId === "r1")).toMatchObject({ kind: "availability_start", localStart: "17/09/2026, 11:00", location: "Room 2", startDay: null, endDayExclusive: null });
     expect(r.items.find((e: any) => e.recurrenceId === "r2")).toMatchObject({ endDayExclusive: "2026-09-19", startDate: null, localStart: null });
   });
   it("rejects invalid date windows and zones before any read", async () => {

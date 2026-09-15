@@ -42,7 +42,7 @@ describe("assignment reliability and submission history", () => {
         { AttemptId: 3, UserId: 99, AttemptNumber: 1, IsPublished: true, Score: 100 },
       ] });
     const r = parse(await captureTool(registerGetAssignments, api).call({ courseId: 5 })).assignments[0];
-    expect(r).toMatchObject({ timeLimit: 30, instructions: "Instructions", attemptsUsed: 2, attemptsRemaining: null, attemptsRemainingAssumingDefault: 1, bestScore: null });
+    expect(r).toMatchObject({ state: "in_progress", timeLimit: 30, instructions: "Instructions", attemptsUsed: 2, attemptsRemaining: null, attemptsRemainingAssumingDefault: 1, bestScore: null });
     expect(r.attempts).toHaveLength(2); expect(r.attempts.every((a: any) => a.score === null)).toBe(true);
     expect(api.requested.some(p => p.endsWith("attempts/?userId=42"))).toBe(true);
   });

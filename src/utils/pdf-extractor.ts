@@ -73,8 +73,10 @@ export async function readPdfPages(
 export async function extractPdfText(
   buffer: Buffer
 ): Promise<{ text: string; totalPages: number } | null> {
+  let document: Awaited<ReturnType<typeof getDocumentProxy>> | undefined;
   try {
-    const result = await extractText(new Uint8Array(buffer), {
+    document = await getDocumentProxy(new Uint8Array(buffer), { verbosity: 0 });
+    const result = await extractText(document, {
       mergePages: true,
     });
     return {
@@ -84,5 +86,7 @@ export async function extractPdfText(
   } catch (error) {
     log("ERROR", "Failed to extract text from PDF", error);
     return null;
+  } finally {
+    await document?.loadingTask.destroy();
   }
 }

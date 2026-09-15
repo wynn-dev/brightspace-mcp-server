@@ -134,7 +134,10 @@ async function downloadContentFile(
 
   // Check Content-Length BEFORE downloading body (prevent memory exhaustion)
   const contentLength = parseInt(response.headers.get("Content-Length") ?? "0", 10);
-  if (contentLength > MAX_FILE_SIZE) return tooLarge(contentLength);
+  if (contentLength > MAX_FILE_SIZE) {
+    await response.body?.cancel();
+    return tooLarge(contentLength);
+  }
 
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const originalFilename = parseContentDispositionFilename(disposition) ?? "download";

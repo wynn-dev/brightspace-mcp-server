@@ -14,6 +14,8 @@ export function calculateScenario(setup: Row | null, objects: Row[], values: Row
   if (categories.length || objects.some(o => id(o.CategoryId))) reasons.add("Category scaling, weighting and drop rules are not supported.");
   if (objects.some(o => o.CategoryId !== null && o.CategoryId !== 0 && !id(o.CategoryId))) reasons.add("Category membership is unknown.");
   if (new Set(objects.map(o => id(o.Id))).size !== objects.length) reasons.add("Duplicate grade object IDs.");
+  if (new Set(values.map(v => id(v.GradeObjectIdentifier))).size !== values.length) reasons.add("Duplicate grade value IDs.");
+  if (new Set((exemptions ?? []).map(e => id(e.GradeObjectId))).size !== exemptions?.length) reasons.add("Missing or duplicate personal exemption data.");
   if (!objects.length) reasons.add("No grade objects available.");
   const byId = new Map(values.map(v => [id(v.GradeObjectIdentifier), v]));
   const exemptionData = new Map((exemptions ?? []).map(e => [id(e.GradeObjectId), e]));
@@ -76,7 +78,7 @@ export async function gradeSummary(api: D2LApiClient, courseId: number, scenario
   const exemptionRows = exemptions?.status === "available" && Array.isArray(exemptions.data?.Items) ? rows(exemptions.data.Items) : null;
   const sources = { values: values.status, objects: objects.status, categories: categories.status, setup: setup.status,
     final: final.status, exemptions: exemptions?.status ?? "unavailable" };
-  const complete = [values, objects, categories, setup].every(r => r.status === "available") && exemptionRows !== null && !hasReadLimits();
+  const complete = [values, objects, categories].every(r => r.complete) && setup.status === "available" && exemptionRows !== null && !hasReadLimits();
   return { courseId, sources, grades: mappedValues, setup: setup.data ? {
     gradingSystem: str(setup.data.GradingSystem), missingGradesAsZero: setup.data.IsNullGradeZero ?? null } : null,
     objects: (objects.data ?? []).map(o => ({ id: id(o.Id), name: str(o.Name), type: str(o.GradeType), description: richText(o.Description),
