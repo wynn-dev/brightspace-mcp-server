@@ -13,7 +13,7 @@ import { toolResponse, errorResponse } from "./tool-helpers.js";
 const mapTopic = (t: Row) => ({ topicId: id(t.TopicId), forumId: id(t.ForumId), name: str(t.Name), description: richText(t.Description),
   dueDate: str(t.DueDate), isLocked: t.IsLocked ?? null, isHidden: t.IsHidden ?? null, mustPostToParticipate: t.MustPostToParticipate ?? null, scoreOutOf: num(t.ScoreOutOf) });
 export const registerGetDiscussions = defineTool({ name: "get_discussions", title: "Get Discussions",
-  description: "Read forums and topics, or a page of discussion posts. Supply forumId and topicId for threadId, unreadOnly, ownOnly and since filters. Follow nextPage even after an empty filtered page. No posts or read-status changes.", schema: GetDiscussionsSchema },
+  description: "Read forums and topics, or a page of discussion posts. Supply forumId and topicId for threadId, unreadOnly, ownOnly and since filters. Use maxPagesToScan (1–10) to scan past sparse pages. Follow nextPage until exhausted, even after an empty filtered result. No posts or read-status changes.", schema: GetDiscussionsSchema },
 async ({ courseId, forumId, topicId, ...options }, { apiClient }) => {
   if ((topicId && !forumId) || ((options.threadId || options.unreadOnly || options.ownOnly || options.since || options.threadsOnly) && !topicId))
     return errorResponse("Post filters require both forumId and topicId; topicId requires forumId.");

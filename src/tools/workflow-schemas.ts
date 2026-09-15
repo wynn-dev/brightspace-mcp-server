@@ -12,5 +12,8 @@ export const UpdatesSchema = z.object({ courseId: courseId.optional(), since: in
 export const GroupsSchema = z.object({ courseId, ...paging });
 export const ChecklistsSchema = z.object({ courseId, checklistId: courseId.optional(), ...paging });
 export const SearchSchema = z.object({ courseId: courseId.optional(), query: z.string().trim().min(2).max(200),
-  sources: z.array(z.enum(["announcements", "assignments", "content", "discussions", "course"])).min(1).default(["announcements", "assignments", "content", "discussions", "course"]), ...paging });
+  sources: z.array(z.enum(["announcements", "assignments", "content", "discussions", "course", "documents"])).min(1).default(["announcements", "assignments", "content", "discussions", "course"]),
+  documentOffset: z.coerce.number().int().min(0).default(0), maxDocuments: z.coerce.number().int().min(1).max(10).default(3),
+  maxDocumentChars: z.coerce.number().int().min(100).max(50_000).default(20_000),
+  documentTopicIds: z.array(courseId).min(1).max(10).optional(), ...paging });
 export const GradeSchema = z.object({ courseId, scenarios: z.array(z.object({ gradeItemId: courseId, points: z.number().finite().min(0) })).max(100).default([]) });

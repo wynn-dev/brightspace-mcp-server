@@ -21,6 +21,8 @@ interface EventDataInfo {
   EndDateTime: string;
   IsAllDayEvent: boolean;
   EventType: number;
+  StartDay?: string | null;
+  EndDay?: string | null;
 }
 
 export const registerGetUpcomingDueDates = defineTool(
@@ -28,10 +30,13 @@ export const registerGetUpcomingDueDates = defineTool(
     name: "get_upcoming_due_dates",
     title: "Get Upcoming Due Dates",
     description:
-      "Fetch calendar events explicitly classified as due dates. Calendar coverage may omit work; use get_my_work for assignment, quiz and content deadlines, or get_calendar for reminders and availability. Use this when the user asks about deadlines, what's due, upcoming work, or what they need to do this week.",
+      "Fetch calendar events explicitly classified as due dates; includeReminders adds separately labelled calendar reminders. Calendar coverage may omit work; use get_my_work for assignment, quiz and content deadlines, or get_calendar for reminders and availability. Use this when the user asks about deadlines, what's due, upcoming work, or what they need to do this week.",
     schema: GetUpcomingDueDatesSchema,
   },
-  async ({ daysAhead, courseId }, { apiClient, config }) => {
+  async ({ daysAhead, courseId, includeReminders }, { apiClient, config }) => {
+    const guidance = { coverage: "Calendar entries only; not a complete inventory of coursework or verified personal extensions.",
+      includeReminders, nextTools: ["get_my_work", "get_calendar"],
+      nextSteps: "Use get_my_work for assignment, quiz and scheduled-content deadlines; get_calendar for availability and recurring events." };
     const now = new Date();
     const endDate = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000);
     const startDateTime = now.toISOString();
@@ -42,12 +47,16 @@ export const registerGetUpcomingDueDates = defineTool(
       ? String(courseId)
       : (await fetchEnrolledCourses(apiClient, config)).map((c) => c.id).join(",");
 
-    if (!orgUnitIds) return toolResponse([]);
+    const respond = (events: unknown[]) => {
+      const result = toolResponse(events);
+      return { ...result, content: [...result.content, { type: "text" as const, text: JSON.stringify(guidance) }], structuredContent: guidance };
+    };
+    if (!orgUnitIds) return respond([]);
 
     log("DEBUG", `get_upcoming_due_dates: querying orgUnitIds=${orgUnitIds}, window=${startDateTime} to ${endDateTime}`);
 
     const path = apiClient.leGlobal(
-      `/calendar/events/myEvents/?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&orgUnitIdsCSV=${orgUnitIds}&eventType=6`
+      `/calendar/events/myEvents/?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&orgUnitIdsCSV=${orgUnitIds}${includeReminders ? "" : "&eventType=6"}`
     );
 
     const events = await getAllObjectListPages<EventDataInfo>(apiClient, path, {
@@ -60,7 +69,7 @@ export const registerGetUpcomingDueDates = defineTool(
 
     // Soonest due first
     const mappedEvents = events
-      .filter(event => event.EventType === 6)
+      .filter(event => event.EventType === 6 || includeReminders && event.EventType === 1)
       .map((event) => ({
         id: event.CalendarEventId,
         title: event.Title,
@@ -69,10 +78,12 @@ export const registerGetUpcomingDueDates = defineTool(
         startDate: event.StartDateTime,
         endDate: event.EndDateTime,
         isAllDay: event.IsAllDayEvent,
+        kind: event.EventType === 6 ? "due_date" : "reminder",
+        startDay: event.StartDay ?? null, endDayExclusive: event.EndDay ?? null,
       }))
       .sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime());
 
     log("INFO", `get_upcoming_due_dates: Retrieved ${mappedEvents.length} events`);
-    return toolResponse(mappedEvents);
+    return respond(mappedEvents);
   }
 );

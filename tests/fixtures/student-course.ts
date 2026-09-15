@@ -19,6 +19,8 @@ export function studentCourseFixture() {
   const folder = { Id: 1, Name: "Matrix report", SubmissionType: 0, DropboxType: 1, GroupTypeId: 2, IsHidden: false,
     DueDate: date(2), CustomInstructions: { Text: "Solve the matrix" }, Assessment: { ScoreDenominator: 10 }, Availability: {} };
   le("/5/dropbox/folders/", [folder]); le("/5/dropbox/folders/1", folder);
+  le("/5/dropbox/folders/1/specialaccess/42", { DueDate: date(2), StartDate: null, EndDate: null });
+  le("/5/quizzes/2/specialaccess/42", { DueDate: date(1), StartDate: null, EndDate: null });
   le("/5/dropbox/folders/1/submissions/mysubmissions/", [{ Entity: { EntityId: 3, EntityType: "Group" },
     Submissions: [{ Id: 10, SubmissionDate: date(-2), Files: [{ FileId: 20, FileName: "report.pdf", Size: pdf.length }] },
       { Id: 11, SubmissionDate: date(-1), Files: [] }],
@@ -65,7 +67,7 @@ export function studentCourseFixture() {
   lp("/5/groupcategories/", [{ GroupCategoryId: 2, Name: "Project teams" }]);
   lp("/5/groupcategories/2/groups/", [{ GroupId: 3, Name: "Our group", Enrollments: [42, 43] }, { GroupId: 4, Name: "Other group", Enrollments: [99] }]);
   lp("/5/sections/mysections/", [{ SectionId: 1, Name: "Section A" }]);
-  le("/5/checklists/", [{ Id: 2, Name: "Matrix preparation" }]);
+  le("/5/checklists/", [{ ChecklistId: 2, Name: "Matrix preparation" }]);
   le("/5/checklists/2/categories/", [{ CategoryId: 3, Name: "Reading" }]);
   le("/5/checklists/2/items/", { Objects: [{ ChecklistItemId: 4, CategoryId: 3, Name: "Read" }], Next: "/d2l/api/le/1.97/5/checklists/2/items/?page=2" });
   le("/5/checklists/2/items/?page=2", { Objects: [{ ChecklistItemId: 5, CategoryId: 3, Name: "Try" }], Next: null });

@@ -31,6 +31,7 @@ export const GetMyCoursesSchema = z.object({
 });
 
 export const GetUpcomingDueDatesSchema = z.object({
+  includeReminders: z.boolean().default(false).describe("Also include calendar reminders, explicitly labelled as reminders rather than deadlines."),
   daysAhead: z.coerce.number().int().min(1).max(90).default(7).describe("Number of days ahead to look for due dates"),
   courseId: z.coerce.number().int().positive().optional().describe("Filter to a specific course ID"),
 });
@@ -97,6 +98,7 @@ export const DownloadFileSchema = z.object({
 });
 
 export const GetSyllabusSchema = z.object({
+  includeContentFallback: z.boolean().default(true),
   courseId: z.coerce.number().int().positive()
     .describe("Course ID to get syllabus for."),
   downloadPath: z.string().min(1).optional()
@@ -107,6 +109,8 @@ export const GetSyllabusSchema = z.object({
 export const ReadOnlyGetSyllabusSchema = GetSyllabusSchema.omit({ downloadPath: true }).strict();
 
 export const GetDiscussionsSchema = z.object({
+  maxPagesToScan: z.coerce.number().int().min(1).max(10).default(1)
+    .describe("Scan additional API pages when filters are sparse. Follow nextPage until null; each returned post is from a scanned page."),
   threadId: z.coerce.number().int().positive().optional(),
   pageNumber: z.coerce.number().int().min(1).max(1000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
@@ -124,6 +128,7 @@ export const GetDiscussionsSchema = z.object({
 });
 
 export const GetRosterSchema = z.object({
+  includeContentFallback: z.boolean().default(true),
   ...paging,
   roleNames: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
   courseId: z.coerce.number().int().positive()

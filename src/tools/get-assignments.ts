@@ -12,7 +12,7 @@ import { fetchCourseAssignments } from "../services/assignments.js";
 
 export const registerGetAssignments = defineTool({
   name: "get_assignments", title: "Get Assignments",
-  description: "Read assignments and quizzes, submission history, published feedback, rubrics and default quiz settings. Failed reads remain unknown. Paginated per course; use folderId for one assignment.",
+  description: "Read assignments and quizzes, submission history, published feedback, rubrics and quiz settings. Checks own-user special access for dates/settings; denied or missing overrides remain unverified course defaults. An ongoing own-user quiz attempt can supply its current deadline. Failed reads remain unknown. Paginated per course; use folderId for one assignment.",
   schema: GetAssignmentsSchema,
 }, async ({ courseId, folderId, offset, limit }, { apiClient, config }) => {
   if (folderId && !courseId) return errorResponse("folderId requires courseId");
