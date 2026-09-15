@@ -32,7 +32,7 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
     const client = new Client({ name: "entrypoint-e2e", version: "1" });
     let child: ReturnType<typeof spawn> | undefined;
     let transport: StdioClientTransport | StreamableHTTPClientTransport | undefined;
-    let logs = "";
+    let logs = "", httpUrl = "";
     try {
       if (mode === "stdio") {
         transport = new StdioClientTransport({ command: process.execPath, args, cwd: dir, env, stderr: "pipe" });
@@ -49,6 +49,7 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
             if (found) { clearTimeout(timer); resolveUrl(found[1]); }
           });
         });
+        httpUrl = url;
         expect((await fetch(new URL("/healthz", url))).status).toBe(200);
         expect((await fetch(url, { method: "POST" })).status).toBe(401);
         transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: "Bearer e2e-http-token" } } });
@@ -63,7 +64,12 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
         expect(response.isError, `${name}: ${JSON.stringify(response.content)}`).not.toBe(true);
         const text = (response.content as Array<{ text: string }>)[0].text;
         expect(text, name).not.toMatch(/PRIVATE_SECRET|UNRELEASED_SECRET|999/);
-        if (name === "check_auth") { expect(text).toMatch(/^Authenticated/); return null; }
+        if (name === "check_auth") {
+          expect(text).toMatch(/^Authenticated/);
+          expect(response.structuredContent?.tools).toEqual(expect.arrayContaining(listed.map(t => t.name)));
+          expect(response.structuredContent?.transport).toBe(mode);
+          return null;
+        }
         expect(response.structuredContent?.readStatus, name).toMatchObject({ partial: false });
         return JSON.parse(text);
       };
@@ -72,7 +78,7 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       expect(JSON.stringify(await call("get_my_grades", { courseId: 5 }))).toContain("80%");
       expect(JSON.stringify(await call("get_announcements", { courseId: 5 }))).toContain("Matrix news");
       expect((await call("get_assignments", { courseId: 5 })).assignments).toMatchObject([
-        { id: 1, state: "submitted" }, { id: 2, state: "in_progress", attemptsUsed: 2, bestScore: 8 },
+        { id: 1, state: "submitted", personalDatesVerified: true }, { id: 2, state: "in_progress", attemptsUsed: 2, bestScore: 8, personalDatesVerified: true },
       ]);
       const history = await call("get_submission_history", { courseId: 5, folderId: 1 });
       expect(history.items).toHaveLength(2); expect(history.latestSubmission.id).toBe(11);
@@ -91,8 +97,14 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       expect((await call("get_checklists", { courseId: 5 })).items[0].items).toMatchObject([{ id: 4, isCompleted: null }, { id: 5, isCompleted: null }]);
       expect((await call("get_roster", { courseId: 5 })).items).toMatchObject([{ name: "Instructor" }]);
       expect(await call("get_classlist_emails", { courseId: 5 })).toMatchObject([{ email: "instructor@example.invalid" }]);
-      expect((await call("get_discussions", { courseId: 5, forumId: 1, topicId: 10, ownOnly: true, unreadOnly: true })).posts).toHaveLength(1);
+      expect((await call("get_discussions", { courseId: 5, forumId: 1, topicId: 10, ownOnly: true, unreadOnly: true, maxPagesToScan: 3 })).posts).toHaveLength(1);
       expect((await call("search_course", { courseId: 5, query: "matrix" })).matchedCount).toBeGreaterThan(5);
+      expect((await call("search_course", { courseId: 5, query: "page two", sources: ["documents"], documentTopicIds: [101] })).items)
+        .toMatchObject([{ source: "document", topicId: 101, page: 2 }]);
+      expect((await call("search_course", { courseId: 5, query: "lesson", sources: ["documents"], documentTopicIds: [102] })).items)
+        .toMatchObject([{ source: "document", topicId: 102, page: null }]);
+      expect((await call("search_course", { courseId: 5, query: "plain text", sources: ["documents"], documentTopicIds: [103] })).items)
+        .toMatchObject([{ source: "document", topicId: 103, page: null }]);
       expect((await call("get_course_content", { courseId: 5 })).topicCount).toBe(3);
       const first = await call("read_course_content", { courseId: 5, topicId: 101, maxChars: 21 });
       expect(first.pages).toMatchObject([{ page: 1, text: "Matrix lecture page o" }]);
@@ -106,6 +118,10 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       expect(await readdir(downloads)).toEqual([]);
       if (mode === "http") {
         expect(listed.every(t => t.annotations?.readOnlyHint === true)).toBe(true);
+        const beforeDiagnostic = await readFile(requestsPath, "utf8");
+        const diagnostic = await promisify(execFile)(process.execPath, [join(root, "build/diagnose.js"), "--http", httpUrl], { cwd: dir, env });
+        expect(JSON.parse(diagnostic.stdout)).toMatchObject({ expectedCount: 20, advertisedCount: 20, missing: [], versionMismatch: false });
+        expect(await readFile(requestsPath, "utf8")).toBe(beforeDiagnostic);
         const before = await readFile(requestsPath, "utf8");
         expect((await client.callTool({ name: "get_syllabus", arguments: { courseId: 5, downloadPath: downloads } })).isError).toBe(true);
         expect((await client.callTool({ name: "download_file", arguments: { courseId: 5, topicId: 101, downloadPath: downloads } })).isError).toBe(true);

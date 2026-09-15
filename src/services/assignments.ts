@@ -1,6 +1,7 @@
 import { readSource } from "../utils/read-status.js";
 import type { D2LApiClient } from "../api/index.js";
 import { object, rows, str, num, id, richText, readList, readObject, page, type Row } from "./data.js";
+import { personalDates } from "./personal-dates.js";
 
 const files = (value: unknown) => rows(value).map(f => ({ fileId: id(f.FileId), name: str(f.FileName), size: num(f.Size) }));
 export function mapSubmissionEntities(entities: Row[]) {
@@ -42,20 +43,23 @@ export async function fetchCourseAssignments(api: D2LApiClient, courseId: number
   const all = [...(folders.data ?? []).filter(f => f.IsHidden !== true).map(row => ({ kind: "assignment", row })),
     ...(quizzes.data ?? []).filter(q => q.IsActive !== false).map(row => ({ kind: "quiz", row }))];
   const selected = page(all, offset, limit);
-  const user = includeDetails && selected.items.some(x => x.kind === "quiz") ?
+  const user = includeDetails && selected.items.length ?
     await readObject(api, api.lp("/users/whoami")) : null;
   const ownId = id(user?.data?.Identifier);
   const assignments = [];
+  const deniedAccessKinds = new Set<string>();
   for (const { kind, row: r } of selected.items) {
     if (kind === "assignment") {
       const folder = id(r.Id);
       const submissions = includeDetails && folder ? await getSubmissionHistory(api, courseId, folder) : null;
       const assessment = object(r.Assessment), availability = object(r.Availability);
+      const dates = await personalDates(api, courseId, kind, folder, ownId,
+        { dueDate: str(r.DueDate), startDate: str(availability.StartDate), endDate: str(availability.EndDate) }, !includeDetails ? "not_requested" : deniedAccessKinds.has(kind) ? "not_checked_after_denial" : false);
+      if (dates.specialAccessStatus === "forbidden") deniedAccessKinds.add(kind);
       const state = !submissions || submissions.status !== "available" ? "unknown" : submissions.completionDate ? "completed" :
         submissions.history.length ? "submitted" : !submissions.complete ? "unknown" : [0, 1, 4].includes(num(r.SubmissionType) ?? -1) ? "not_submitted" : "unknown";
       assignments.push({ type: kind, id: folder, name: str(r.Name), instructions: richText(r.CustomInstructions),
-        dueDate: str(r.DueDate), startDate: str(availability.StartDate), endDate: str(availability.EndDate),
-        datesScope: "Course defaults; individual special-access dates are not verified.",
+        ...dates,
         points: num(assessment.ScoreDenominator), isGroup: r.DropboxType === 1, groupCategoryId: id(r.GroupTypeId),
         submissionType: num(r.SubmissionType), completionType: num(r.CompletionType), gradeItemId: id(r.GradeItemId),
         attachments: files(r.Attachments), allowableFileType: r.AllowableFileType ?? null,
@@ -73,16 +77,27 @@ export async function fetchCourseAssignments(api: D2LApiClient, courseId: number
         feedback: a.IsPublished === true ? richText(a.AttemptFeedback) : "", dueDate: str(a.AttemptDueDate),
       })).sort((a, b) => (b.attemptNumber ?? 0) - (a.attemptNumber ?? 0));
       const allowed = object(r.AttemptsAllowed), timing = object(r.SubmissionTimeLimit);
+      const dates = await personalDates(api, courseId, kind, quizId, ownId,
+        { dueDate: str(r.DueDate), startDate: str(r.StartDate), endDate: str(r.EndDate) }, !includeDetails ? "not_requested" : deniedAccessKinds.has(kind) ? "not_checked_after_denial" : false);
+      if (dates.specialAccessStatus === "forbidden") deniedAccessKinds.add(kind);
+      const effectiveTiming = dates.specialAccess?.submissionTimeLimit ? object(dates.specialAccess.submissionTimeLimit) : timing;
+      const effectiveAllowed = dates.specialAccess?.attemptsAllowed ? object(dates.specialAccess.attemptsAllowed) : allowed;
+      const activeAttempt = own.find(a => !a.completed && a.started && a.dueDate && Number.isFinite(Date.parse(a.dueDate)));
+      if (!dates.personalDatesVerified && activeAttempt) {
+        dates.dueDate = activeAttempt.dueDate; dates.datesSource = "active_attempt";
+        dates.datesScope = "Due date of the active own-user attempt; other dates and future attempts remain unverified.";
+      }
       const scores = own.map(a => a.score).filter((s): s is number => s !== null);
       assignments.push({ type: kind, id: quizId, name: str(r.Name), instructions: richText(r.Instructions) || richText(r.Description),
-        dueDate: str(r.DueDate), startDate: str(r.StartDate), endDate: str(r.EndDate), gradeItemId: id(r.GradeItemId),
+        ...dates, gradeItemId: id(r.GradeItemId),
         state: !attempts?.complete ? "unknown" : own.some(a => !a.completed) ? "in_progress" : own.length ? "attempt_completed" : "not_started",
-        timeLimit: timing.IsEnforced === true ? num(timing.TimeLimitValue) : null, isSynchronous: r.IsSynchronous === true,
-        attemptsAllowed: allowed.IsUnlimited === true ? "Unlimited" : num(allowed.NumberOfAttemptsAllowed),
+        timeLimit: effectiveTiming.IsEnforced === true ? num(effectiveTiming.TimeLimitValue) : null, isSynchronous: r.IsSynchronous === true,
+        attemptsAllowed: effectiveAllowed.IsUnlimited === true ? "Unlimited" : num(effectiveAllowed.NumberOfAttemptsAllowed),
         attemptsUsed: attempts?.complete ? own.length : null, attemptsRemaining: null,
         attemptsRemainingAssumingDefault: !attempts?.complete ? null : allowed.IsUnlimited === true ? "Unlimited" :
           num(allowed.NumberOfAttemptsAllowed) === null ? null : Math.max(0, Number(allowed.NumberOfAttemptsAllowed) - own.length),
-        settingsScope: "Course defaults; individual special access may change dates, time limits and attempts.",
+        settingsScope: dates.personalDatesVerified ? "Own-user special access applied where provided; remaining attempts are not asserted." :
+          "Course defaults; individual special access may change dates, time limits and attempts.",
         attemptStatus: attempts?.status ?? "unavailable", attempts: own, bestScore: scores.length ? Math.max(...scores) : null });
     }
   }

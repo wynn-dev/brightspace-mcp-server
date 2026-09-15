@@ -12,7 +12,7 @@ import type { AppConfig } from "../types/index.js";
 /** Raw D2L myenrollments item. */
 export interface EnrollmentItem {
   OrgUnit: { Id: number; Name: string; Code: string };
-  Access: { ClasslistRoleName: string; IsActive: boolean; LastAccessed: string | null };
+  Access: { ClasslistRoleName: string; IsActive: boolean; LastAccessed: string | null; StartDate?: string | null; EndDate?: string | null };
 }
 
 /** Key order matters: this is get_my_courses' JSON output. */
@@ -23,6 +23,8 @@ export interface EnrolledCourse {
   role: string;
   isActive: boolean;
   lastAccessed: string | null;
+  accessStartDate?: string | null;
+  accessEndDate?: string | null;
 }
 
 /**
@@ -52,6 +54,8 @@ export async function fetchEnrolledCourses(
       role: item.Access.ClasslistRoleName,
       isActive: item.Access.IsActive,
       lastAccessed: item.Access.LastAccessed,
+      ...(item.Access.StartDate !== undefined ? { accessStartDate: item.Access.StartDate } : {}),
+      ...(item.Access.EndDate !== undefined ? { accessEndDate: item.Access.EndDate } : {}),
     })),
     { ...config.courseFilter, activeOnly }
   );

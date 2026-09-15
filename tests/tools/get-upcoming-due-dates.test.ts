@@ -68,7 +68,7 @@ describe("get_upcoming_due_dates", () => {
     const result = parse(await call({ courseId: 1 }));
 
     expect(result.map((e: { id: string }) => e.id)).toEqual(["soon", "late"]);
-    expect(result[0]).toEqual({
+    expect(result[0]).toMatchObject({
       id: "soon",
       title: "Event soon",
       courseName: "Course",

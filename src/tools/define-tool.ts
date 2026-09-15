@@ -33,11 +33,11 @@ export type ToolBody<S extends z.ZodObject> = (
 ) => Promise<CallToolResult>;
 
 /** Every tool registers through the same positional signature. */
-export type RegisterTool = (
+export type RegisterTool = ((
   server: McpServer,
   apiClient: D2LApiClient,
   config: AppConfig
-) => void;
+) => void) & { toolName: string };
 
 /**
  * Build a tool's register function from its metadata and a typed body.
@@ -57,7 +57,7 @@ export function defineTool<S extends z.ZodObject>(
 ): RegisterTool {
   const { name, title, description, schema, annotations = { readOnlyHint: true } } = def;
 
-  return (server, apiClient, config) => {
+  return Object.assign((server: McpServer, apiClient: D2LApiClient, config: AppConfig) => {
     const ctx: ToolContext = { apiClient, config };
 
     const handler = async (rawArgs: unknown): Promise<CallToolResult> => withReadStatus(async () => {
@@ -78,5 +78,5 @@ export function defineTool<S extends z.ZodObject>(
       { title, description, inputSchema: schema, annotations },
       handler as unknown as ToolCallback<S>
     );
-  };
+  }, { toolName: name });
 }

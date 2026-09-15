@@ -46,6 +46,30 @@ export const PKG_VERSION = (() => {
   }
 })();
 
+const COMMON_TOOLS = [
+  registerGetCalendar,
+  registerGetSubmissionHistory,
+  registerGetMyWork,
+  registerGetCourseUpdates,
+  registerGetMyGroups,
+  registerGetChecklists,
+  registerGetGradeSummary,
+  registerSearchCourse,
+  registerGetMyCourses,
+  registerGetUpcomingDueDates,
+  registerGetMyGrades,
+  registerGetAnnouncements,
+  registerGetAssignments,
+  registerGetCourseContent,
+  registerReadCourseContent,
+  registerGetClasslistEmails,
+  registerGetRoster,
+  registerGetDiscussions
+];
+export function toolNames(includeDownloadFile = false): string[] {
+  return ["check_auth", ...COMMON_TOOLS.map(tool => tool.toolName), "get_syllabus", ...(includeDownloadFile ? ["download_file"] : [])];
+}
+
 interface McpServerDeps {
   apiClient: D2LApiClient;
   tokenManager: Pick<TokenManager, "getToken">;
@@ -82,6 +106,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       "Brightspace MCP Server — by Rohan Muppa (github.com/rohanmuppa/brightspace-mcp-server)",
   });
 
+  const discovery = { serverVersion: version, tools: toolNames(includeDownloadFile),
+    transport: includeDownloadFile ? "stdio" : "http",
+    discoveryAdvice: "If these tools are missing from your client, refresh its MCP tool list or reconnect. Updating files requires restarting the server process. Run pnpm run diagnose to compare discovery." };
+
   // check_auth takes no input, so no inputSchema
   server.registerTool(
     "check_auth",
@@ -111,6 +139,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           log("INFO", "check_auth: Auto-reauthentication failed or produced no valid token");
 
           return {
+            structuredContent: discovery,
             content: [
               {
                 type: "text",
@@ -130,6 +159,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       log("INFO", `check_auth: Token valid, expires in ~${expiresIn} minutes`);
 
       return {
+        structuredContent: discovery,
         content: [
           {
             type: "text",
@@ -140,27 +170,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }
   );
 
-  registerGetCalendar(server, apiClient, config);
-  registerGetSubmissionHistory(server, apiClient, config);
-  registerGetMyWork(server, apiClient, config);
-  registerGetCourseUpdates(server, apiClient, config);
-  registerGetMyGroups(server, apiClient, config);
-  registerGetChecklists(server, apiClient, config);
-  registerGetGradeSummary(server, apiClient, config);
-  registerSearchCourse(server, apiClient, config);
-  registerGetMyCourses(server, apiClient, config);
-  registerGetUpcomingDueDates(server, apiClient, config);
-  registerGetMyGrades(server, apiClient, config);
-  registerGetAnnouncements(server, apiClient, config);
-  registerGetAssignments(server, apiClient, config);
-  registerGetCourseContent(server, apiClient, config);
-  registerReadCourseContent(server, apiClient, config);
+  for (const register of COMMON_TOOLS) register(server, apiClient, config);
   if (includeDownloadFile) registerDownloadFile(server, apiClient, config);
-  registerGetClasslistEmails(server, apiClient, config);
-  registerGetRoster(server, apiClient, config);
-  const registerSyllabus = includeDownloadFile ? registerGetSyllabus : registerReadOnlyGetSyllabus;
-  registerSyllabus(server, apiClient, config);
-  registerGetDiscussions(server, apiClient, config);
+  (includeDownloadFile ? registerGetSyllabus : registerReadOnlyGetSyllabus)(server, apiClient, config);
 
   log("DEBUG", `MCP tools registered (${includeDownloadFile ? 21 : 20} including check_auth)`);
   return server;

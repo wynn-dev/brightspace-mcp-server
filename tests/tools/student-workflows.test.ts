@@ -47,7 +47,7 @@ describe("calendar and work overview", () => {
       ], "/myEvents/": [event, { ...event, CalendarEventId: "2", EventType: 1, Title: "Reminder" }] });
     const r = parse(await captureTool(registerGetMyWork, api).call({ courseId: 5 }));
     expect(r.items.map((x: any) => x.name)).toEqual(["Report", "Deadline", "Unknown"]);
-    expect(r.items[0]).toMatchObject({ overdue: true, closed: false, state: "unknown" });
+    expect(r.items[0]).toMatchObject({ overdue: null, overdueAssumingCourseDefaults: true, closed: null, state: "unknown" });
     expect(r.calendarContext.map((x: any) => x.title)).toEqual(["Reminder"]);
   });
 });

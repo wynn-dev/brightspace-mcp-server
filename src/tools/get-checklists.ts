@@ -10,8 +10,14 @@ async ({ courseId, checklistId, offset, limit }, { apiClient }) => {
   const result = checklistId ? await readObject(apiClient, `${path}${checklistId}`).then(r => ({ ...r, data: r.data ? [r.data] : null })) : await readList(apiClient, path);
   const selected = page(result.data ?? [], offset, limit), checklists = [];
   for (const c of selected.items) {
-    const checklist = id(c.Id);
-    if (!checklist) { recordLimit("Checklist response contained an invalid ID"); continue; }
+    // Current institutions return ChecklistId; the public contract also documents Id.
+    const checklist = id(c.ChecklistId) ?? id(c.Id);
+    if (!checklist) {
+      recordLimit("Checklist response contained an invalid ID; details could not be loaded");
+      checklists.push({ id: null, name: str(c.Name), description: richText(c.Description),
+        sources: { categories: "unavailable", items: "unavailable" }, categories: [], items: [] });
+      continue;
+    }
     const [categories, items] = await Promise.all([readList(apiClient, `${path}${checklist}/categories/`), readList(apiClient, `${path}${checklist}/items/`)]);
     checklists.push({ id: checklist, name: str(c.Name), description: richText(c.Description),
       sources: { categories: categories.status, items: items.status },

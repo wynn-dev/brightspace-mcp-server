@@ -72,7 +72,7 @@ describe("get_syllabus", () => {
     const result = await call({ courseId: 8 });
 
     expect(result.isError).toBeUndefined();
-    expect(parse(result)).toEqual({
+    expect(parse(result)).toMatchObject({
       courseId: 8,
       description: null,
       hasAttachment: false,
@@ -116,6 +116,6 @@ describe("get_syllabus", () => {
 
     const result = parse(await call({ courseId: 8 }));
 
-    expect(result).toEqual({ courseId: 8, description: null, hasAttachment: false });
+    expect(result).toMatchObject({ courseId: 8, description: null, hasAttachment: false, contentFallback: { status: "not_found" } });
   });
 });

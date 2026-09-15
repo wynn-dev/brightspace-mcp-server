@@ -2,7 +2,7 @@ import { defineTool } from "./define-tool.js";
 import { WorkSchema } from "./workflow-schemas.js";
 import { fetchCourseAssignments } from "../services/assignments.js";
 import { fetchCalendar } from "../services/calendar.js";
-import { readList, id, str, num, page, type Row } from "../services/data.js";
+import { readList, id, str, num, page, object, type Row } from "../services/data.js";
 import { fetchEnrolledCourses } from "./course-helpers.js";
 import { recordLimit } from "../utils/read-status.js";
 import { toolResponse } from "./tool-helpers.js";
@@ -19,7 +19,8 @@ async ({ courseId, daysAhead, daysBehind, includeCompleted, includeUndated, offs
     if (assignments.nextOffset !== null) recordLimit(`Work overview: first 100 assignments/quizzes for course ${course.id}; use get_assignments pagination`);
     sources.push({ courseId: course.id, ...assignments.sources, scheduledContent: content.status });
     for (const a of assignments.assignments) work.push({ type: a.type, id: a.id, name: a.name, state: a.state,
-      dueDate: a.dueDate, startDate: a.startDate, endDate: a.endDate, datesScope: "course_defaults; individual special access is not verified",
+      dueDate: a.dueDate, startDate: a.startDate, endDate: a.endDate, datesScope: a.datesScope,
+      datesSource: a.datesSource, personalDatesVerified: a.personalDatesVerified, courseDefaultDates: a.courseDefaultDates,
       courseId: course.id, courseName: course.name,
       source: "assignments", sourceUrl: `${config.baseUrl.replace(/\/$/, "")}/d2l/home/${course.id}` });
     for (const c of content.data ?? []) work.push({ type: "content", id: id(c.ItemId), name: str(c.ItemName), courseId: course.id,
@@ -32,18 +33,24 @@ async ({ courseId, daysAhead, daysBehind, includeCompleted, includeUndated, offs
   // Cross-source identities are not reliably comparable: preserve them instead of silently merging distinct tasks.
   for (const event of calendar.events.filter(e => e.kind === "due_date")) work.push({ type: "calendar_deadline", id: event.id,
     courseId: event.courseId, name: event.title, dueDate: event.startDate, dueDay: event.startDay, datesScope: "calendar", endDate: null, state: "unknown", source: "calendar", sourceUrl: event.sourceUrl });
+  let unverifiedDatesOutsideWindow = 0;
   const selected = work.filter(w => {
     if (!includeCompleted && ["completed", "submitted", "attempt_completed", "exempt"].includes(String(w.state))) return false;
     // All-day calendar deadlines were already restricted by the API window.
     if (str(w.dueDay)) return true;
     const due = str(w.dueDate);
-    return due ? Date.parse(due) >= Date.parse(start) && Date.parse(due) <= Date.parse(end) : includeUndated;
-  }).map((w): Row => ({ ...w, overdue: typeof w.dueDate === "string" ? Date.parse(w.dueDate) < now : null,
-    closed: typeof w.endDate === "string" ? Date.parse(w.endDate) < now : null }))
+    const withinWindow = due ? Date.parse(due) >= Date.parse(start) && Date.parse(due) <= Date.parse(end) : includeUndated;
+    if (!withinWindow && w.source === "assignments" && !w.personalDatesVerified && w.datesSource !== "active_attempt") unverifiedDatesOutsideWindow++;
+    return withinWindow;
+  }).map((w): Row => ({ ...w,
+    overdue: w.source === "assignments" && !w.personalDatesVerified && w.datesSource !== "active_attempt" ? null : typeof w.dueDate === "string" ? Date.parse(w.dueDate) < now : null,
+    closed: w.source === "assignments" && !w.personalDatesVerified ? null : typeof w.endDate === "string" ? Date.parse(w.endDate) < now : null,
+    overdueAssumingCourseDefaults: w.source === "assignments" && !w.personalDatesVerified && typeof object(w.courseDefaultDates).dueDate === "string" ? Date.parse(String(object(w.courseDefaultDates).dueDate)) < now : null }))
     .sort((a, b) => String(a.dueDate ?? "9999").localeCompare(String(b.dueDate ?? "9999")));
+  if (unverifiedDatesOutsideWindow) recordLimit("Work excluded by unverified course-default dates may have personal extensions; inspect get_assignments without a date window");
   const calendarContext = calendar.events.filter(e => e.kind !== "due_date");
   if (calendarContext.length > limit) recordLimit("Calendar context limited; use get_calendar for continuation");
-  return toolResponse({ start, end, sources, calendarStatus: calendar.status,
+  return toolResponse({ start, end, sources, unverifiedDatesOutsideWindow, calendarStatus: calendar.status,
     note: "Sources may refer to the same activity. Submitted assignments and completed quiz attempts may still allow further submissions. Unknown completion does not mean unfinished.",
     calendarContext: calendarContext.slice(0, limit), calendarContextHasMore: calendarContext.length > limit, ...page(selected, offset, limit) });
 });
