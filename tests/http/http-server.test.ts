@@ -28,8 +28,16 @@ const config = {
 
 const apiClient = {
   lp: (p: string) => `/d2l/api/lp/1.0${p}`,
+  leGlobal: (p: string) => `/d2l/api/le/1.0${p}`,
   le: (courseId: number, p: string) => `/d2l/api/le/1.0/${courseId}${p}`,
   get: vi.fn(async (path: string) => {
+    if (path.endsWith("/users/whoami")) return { Identifier: "42" };
+    if (path.endsWith("/grades/setup/")) return { GradingSystem: "Points", IsNullGradeZero: false };
+    if (path.includes("/grades/exemptions/")) return { Items: [] };
+    if (path.includes("/grades/final/")) return { DisplayedGrade: null };
+    if (path.endsWith("/content/toc")) return { Modules: [] };
+    if (path.includes("/courses/")) return { Name: "Course", Description: null };
+    if (["/dropbox/", "/quizzes/", "/calendar/", "/checklists/", "/groups/", "/groupcategories/", "/sections/", "/feed/", "/updates/", "/news/", "/grades/", "/discussions/", "/content/myItems/"].some(p => path.includes(p))) return [];
     if (path.includes("/content/topics/")) return { Title: "Lecture notes", TopicType: 1 };
     if (path.endsWith("/overview")) return { Description: null };
     return {
@@ -179,7 +187,7 @@ describe("Streamable HTTP MCP server", () => {
 
         const { tools } = await client.listTools();
         const names = tools.map((t) => t.name).sort();
-        expect(names).toHaveLength(12);
+        expect(names).toHaveLength(20);
         expect(names).toContain("get_my_courses");
         expect(names).toContain("check_auth");
         expect(names).toContain("read_course_content");
@@ -206,6 +214,31 @@ describe("Streamable HTTP MCP server", () => {
         const auth = await client.callTool({ name: "check_auth", arguments: {} });
         const authText = (auth.content as Array<{ type: string; text: string }>)[0].text;
         expect(authText).toMatch(/^Authenticated with Brightspace/);
+      } finally {
+        await transport.terminateSession();
+        await client.close();
+      }
+    });
+
+    it("runs all new workflows through the HTTP wire without file writes", async () => {
+      const { client, transport } = await connect(running);
+      const calls = [
+        ["get_my_work", { courseId: 43105 }],
+        ["get_submission_history", { courseId: 43105, folderId: 1 }],
+        ["get_course_updates", { courseId: 43105, since: "2026-01-01T00:00:00Z" }],
+        ["get_grade_summary", { courseId: 43105 }],
+        ["search_course", { courseId: 43105, query: "lecture" }],
+        ["get_my_groups", { courseId: 43105 }],
+        ["get_calendar", { courseId: 43105, start: "2026-09-01T00:00:00Z", end: "2026-10-01T00:00:00Z" }],
+        ["get_checklists", { courseId: 43105 }],
+      ] as const;
+      try {
+        for (const [name, args] of calls) {
+          const result = await client.callTool({ name, arguments: args });
+          expect(result.isError, name).not.toBe(true);
+          expect(result.structuredContent, name).toHaveProperty("readStatus");
+        }
+        expect(secureDownload).not.toHaveBeenCalled();
       } finally {
         await transport.terminateSession();
         await client.close();

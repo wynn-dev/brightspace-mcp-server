@@ -1,0 +1,22 @@
+# Read-only workflow API contracts
+
+The tools use the API versions discovered from the institution. Permissions, course configuration and API versions can make individual sources unavailable. Tools report that distinction instead of interpreting a denied read as an empty dataset.
+
+| Area | D2L reference | Contract decisions |
+|---|---|---|
+| Assignments and feedback | [Dropbox](https://docs.valence.desire2learn.com/res/dropbox.html) | `submissions/mysubmissions/` returns `EntityDropbox` containers, each with `Entity`, `Submissions`, `Feedback` and `CompletionDate`. Flatten and sort all available submissions. Only feedback with `IsGraded: true` is exposed; no invented `feedback/myFeedback/` route. |
+| Quiz attempts | [Quizzes](https://docs.valence.desire2learn.com/res/quiz.html) | Resolve the current user and pass `userId`, then filter returned attempts by `UserId` again. Completion is the nullable `Completed` timestamp. Respect `IsPublished`; a null score stays null. Read `SubmissionTimeLimit` and displayed nested rich text. Course defaults are not verified personal special access. |
+| Content and completion | [Content](https://docs.valence.desire2learn.com/res/content.html) | Stable `content/myItems/` supplies scheduled items with `ItemId`, `DateCompleted`, `CompletionType` and `IsExempt`. It is not a complete progress inventory. Do not call unstable `content/userprogress/` using a stable version or equate read state with completion. |
+| News and feed | [News/feed](https://docs.valence.desire2learn.com/res/news.html), [updates](https://docs.valence.desire2learn.com/res/updates.html) | Batch counts accept at most 100 course IDs. Counts of -1 are not zero. News uses numeric author IDs and separate created/modified timestamps. Support documented `MessageMetaData` and observed `Metadata`; derive the course from a same-origin `ApiViewUrl` when no explicit course ID is supplied. |
+| Grades | [Grades](https://docs.valence.desire2learn.com/res/grade.html) | Join own visible values to grade objects, categories and setup. Fetch own bulk exemptions where permitted; do not expose values from that management-oriented response. Keep private comments out and official final separate. Refuse unsupported or incomplete calculations. |
+| Calendar | [Calendar](https://docs.valence.desire2learn.com/res/calendar.html) | Event types and the occurrences route require LE 1.94+. Occurrences wrap `EventDataInfo` and `Occurrences`. A null occurrence timestamp stays null; it must not inherit a different occurrence's timestamp. Preserve all-day dates and exclusive end dates. |
+| Groups and sections | [Groups](https://docs.valence.desire2learn.com/res/groups.html) | Resolve group membership using the authenticated user's ID in `Enrollments`. Own sections can return 404 when not configured. Do not expose other groups or infer membership when enrollment data is missing. |
+| Course discovery/staff | [Courses](https://docs.valence.desire2learn.com/res/course.html), [users](https://docs.valence.desire2learn.com/res/user.html) | Course offering metadata supplies dates and semester. Active enrollment alone does not establish the current term. Role IDs are institution-specific; staff selection uses returned role labels with an explicit-label override. |
+| Discussions | [Discussions](https://docs.valence.desire2learn.com/res/discuss.html) | Posts support `pageNumber`, `pageSize`, `threadId`, `threadsOnly` and `sort`. Local unread/own/since filters do not imply exhaustion of the API page chain. Do not call read-status mutations. |
+| Checklists | [Checklists](https://docs.valence.desire2learn.com/res/checklist.html) | Checklist records use `Id`; category records use `CategoryId`; items use `ChecklistItemId`. This API does not expose personal item completion. |
+
+## Validation
+
+`pnpm run build` checks the production TypeScript. `pnpm run test:run` runs synthetic API-contract tests and SDK-driven Streamable HTTP tests. Tests include real generated PDFs, Unicode continuation, streaming byte limits, paged submissions and errors, own-user privacy, grade-rule refusal, date/time-zone handling, source tracing and HTTP file-write exclusion.
+
+Live checking requires a fresh `pnpm run auth` session. Limit live tests to GET requests and avoid printing tokens, personal scores or document bodies. A successful empty endpoint does not validate nonempty quiz, rubric, checklist or recurrence mappings; those require representative fixtures or a suitable course. No live account data belongs in test fixtures.

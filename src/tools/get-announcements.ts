@@ -15,7 +15,7 @@ interface NewsItem {
   Id: number;
   Title: string;
   Body: { Text: string; Html: string } | null;
-  CreatedBy: { Identifier: string; DisplayName: string } | null;
+  CreatedBy: number | { Identifier: string; DisplayName: string } | null;
   CreatedDate: string;
   LastModifiedBy: { Identifier: string; DisplayName: string };
   LastModifiedDate: string;
@@ -32,8 +32,12 @@ function mapNewsItem(item: NewsItem) {
     id: item.Id,
     title: item.Title,
     body: item.Body?.Text ?? "",
-    createdBy: item.CreatedBy?.DisplayName ?? "Unknown",
+    createdBy: typeof item.CreatedBy === "object" ? item.CreatedBy?.DisplayName ?? null : null,
+    createdById: typeof item.CreatedBy === "number" ? item.CreatedBy : null,
     createdDate: item.CreatedDate,
+    lastModifiedDate: item.LastModifiedDate ?? item.CreatedDate,
+    endDate: item.EndDate ?? null,
+    attachments: item.Attachments ?? [],
     startDate: item.StartDate,
     isPinned: item.IsPinned,
   };

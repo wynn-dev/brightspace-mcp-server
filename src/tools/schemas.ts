@@ -5,6 +5,7 @@
  */
 
 import { z } from "zod";
+import { paging, instant } from "./workflow-schemas.js";
 
 /**
  * Zod schemas for MCP tool input validation.
@@ -13,6 +14,11 @@ import { z } from "zod";
  */
 
 export const GetMyCoursesSchema = z.object({
+  query: z.string().trim().min(1).max(200).optional(),
+  includeDetails: z.boolean().default(false),
+  semester: z.string().trim().min(1).max(200).optional(),
+  onDate: z.iso.date().optional(),
+  sort: z.enum(["enrollment", "recent", "name"]).default("enrollment"),
   // Intentionally has no default: omitting it falls back to the configured
   // D2L_ACTIVE_ONLY / config.json policy (true unless the user changed it).
   // A default here would silently override that configuration on every call.
@@ -39,6 +45,9 @@ export const GetAnnouncementsSchema = z.object({
 });
 
 export const GetAssignmentsSchema = z.object({
+  folderId: z.coerce.number().int().positive().optional(),
+  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
   courseId: z.coerce.number().int().positive().optional()
     .describe("Course ID to get assignments for. If omitted, returns assignments for all enrolled courses."),
 });
@@ -98,6 +107,14 @@ export const GetSyllabusSchema = z.object({
 export const ReadOnlyGetSyllabusSchema = GetSyllabusSchema.omit({ downloadPath: true }).strict();
 
 export const GetDiscussionsSchema = z.object({
+  threadId: z.coerce.number().int().positive().optional(),
+  pageNumber: z.coerce.number().int().min(1).max(1000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  unreadOnly: z.boolean().default(false),
+  ownOnly: z.boolean().default(false),
+  threadsOnly: z.boolean().default(false),
+  since: instant.optional(),
+  sort: z.enum(["creationdate", "-creationdate", "threaded"]).default("-creationdate"),
   courseId: z.coerce.number().int().positive()
     .describe("Course ID to get discussion boards for."),
   forumId: z.coerce.number().int().positive().optional()
@@ -107,6 +124,8 @@ export const GetDiscussionsSchema = z.object({
 });
 
 export const GetRosterSchema = z.object({
+  ...paging,
+  roleNames: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
   courseId: z.coerce.number().int().positive()
     .describe("Course ID to get roster for."),
   includeStudents: z.boolean().default(false)

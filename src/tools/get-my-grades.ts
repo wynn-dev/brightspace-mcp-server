@@ -27,6 +27,8 @@ interface GradeValue {
 
 function mapGradeValue(gv: GradeValue) {
   return {
+    id: gv.GradeObjectIdentifier,
+    releasedDate: gv.ReleasedDate ?? null,
     name: gv.GradeObjectName,
     displayGrade: gv.DisplayedGrade,
     pointsNumerator: gv.PointsNumerator,

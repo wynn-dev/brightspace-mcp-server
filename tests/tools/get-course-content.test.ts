@@ -32,7 +32,7 @@ describe("get_course_content", () => {
         topic(10, "Slides", 1, { Description: { Text: "pdf", Html: "" } }),
         topic(11, "Video", 2, { Url: "https://youtube.com/x" }),
       ],
-      "/3/content/userprogress/": [{ UserId: 1, ContentObjectId: 10, IsRead: true, DateCompleted: "2026-09-01T00:00:00Z" }],
+      "/3/content/myItems/": [{ UserId: 1, ItemId: 10, CompletionType: 2, DateCompleted: "2026-09-01T00:00:00Z" }],
     });
     const { call } = captureTool(registerGetCourseContent, apiClient);
 
@@ -54,7 +54,7 @@ describe("get_course_content", () => {
       description: "pdf",
       topicId: 10,
     });
-    expect(week.children[1]).toMatchObject({ topicType: "link", url: "https://youtube.com/x", isCompleted: false });
+    expect(week.children[1]).toMatchObject({ topicType: "link", url: "https://youtube.com/x", isCompleted: null });
   });
 
   it("filters root modules by title and does not descend past maxDepth", async () => {
@@ -62,7 +62,7 @@ describe("get_course_content", () => {
       "/3/content/root/": [module(1, "Labs"), module(2, "Lectures")],
       "/content/modules/1/structure/": [module(5, "Lab 1")],
       "/content/modules/5/structure/": [topic(50, "Deep", 1)],
-      "/3/content/userprogress/": () => {
+      "/3/content/myItems/": () => {
         throw new ApiError(404, "/x", "no progress");
       },
     });
@@ -80,7 +80,7 @@ describe("get_course_content", () => {
       "/3/content/root/": [module(1, "Files"), module(2, "Links")],
       "/content/modules/1/structure/": [topic(10, "Doc", 1)],
       "/content/modules/2/structure/": [topic(20, "Site", 2, { Url: "https://example.com" })],
-      "/3/content/userprogress/": [],
+      "/3/content/myItems/": [],
     });
     const { call } = captureTool(registerGetCourseContent, apiClient);
 

@@ -13,6 +13,14 @@ import type { TokenManager, AuthRunner } from "./auth/index.js";
 import type { AppConfig } from "./types/index.js";
 import { log } from "./utils/logger.js";
 import {
+  registerGetCalendar,
+  registerGetSubmissionHistory,
+  registerGetMyWork,
+  registerGetCourseUpdates,
+  registerGetMyGroups,
+  registerGetChecklists,
+  registerGetGradeSummary,
+  registerSearchCourse,
   registerGetMyCourses,
   registerGetUpcomingDueDates,
   registerGetMyGrades,
@@ -132,6 +140,14 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }
   );
 
+  registerGetCalendar(server, apiClient, config);
+  registerGetSubmissionHistory(server, apiClient, config);
+  registerGetMyWork(server, apiClient, config);
+  registerGetCourseUpdates(server, apiClient, config);
+  registerGetMyGroups(server, apiClient, config);
+  registerGetChecklists(server, apiClient, config);
+  registerGetGradeSummary(server, apiClient, config);
+  registerSearchCourse(server, apiClient, config);
   registerGetMyCourses(server, apiClient, config);
   registerGetUpcomingDueDates(server, apiClient, config);
   registerGetMyGrades(server, apiClient, config);
@@ -146,6 +162,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   registerSyllabus(server, apiClient, config);
   registerGetDiscussions(server, apiClient, config);
 
-  log("DEBUG", `MCP tools registered (${includeDownloadFile ? 13 : 12} including check_auth)`);
+  log("DEBUG", `MCP tools registered (${includeDownloadFile ? 21 : 20} including check_auth)`);
   return server;
 }

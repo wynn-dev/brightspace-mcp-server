@@ -54,7 +54,7 @@ MCP_AUTH_TOKEN="$(openssl rand -hex 32)" MCP_HTTP_HOST=0.0.0.0 pnpm run start:ht
 
 Or put those settings in `.env` / `.env.local` (see `.env.example`) and just run `pnpm run start:http`.
 
-This exposes the 12 read-only tools at `http://<host>:8787/mcp`, including `read_course_content`. `download_file` is left out, and `get_syllabus` rejects `downloadPath` over HTTP, so course files cannot be saved to the server's disk through these tools. Clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`:
+This exposes the 20 read-only tools at `http://<host>:8787/mcp`, including `read_course_content`. `download_file` is left out, and `get_syllabus` rejects `downloadPath` over HTTP, so course files cannot be saved to the server's disk through these tools. Clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`:
 
 ```bash
 claude mcp add --transport http brightspace http://your-host:8787/mcp --header "Authorization: Bearer <token>"
@@ -88,6 +88,66 @@ Responses include the document title, filename, content type, and a Brightspace 
 Each response defaults to **20,000 text characters** (`maxChars`, configurable from 2 to 50,000) and at most **20 PDF pages**, including blank pages. Files have a **50 MiB** streaming limit. Page selection is PDF-only. UTF-8, Unicode BOMs, and supported encodings declared in `Content-Type` are recognized for text files. Continuation re-fetches the document; no document cache or downloaded file is persisted.
 
 Scanned pages need OCR, which is not included. Images, diagrams, and equations may not be represented faithfully by PDF text extraction. Password-protected PDFs, Office documents, external links, videos, and learning-tool activities are unsupported. Access remains subject to your Brightspace account's permissions. Stdio clients can still save originals using `download_file` or `get_syllabus.downloadPath`.
+
+## Student workflows
+
+These tools work over both transports and only read Brightspace data. They do not submit coursework, change grades, join groups, check checklist items, or mark discussions as read.
+
+| Tool | What it reads |
+|---|---|
+| `get_my_work` | Assignments, quizzes, scheduled content and calendar deadlines, including overdue or undated work. Useful for a weekly briefing. Completion, exemptions and unavailable sources stay explicit. |
+| `get_submission_history` | All available individual/group submissions for a `folderId`, newest first, plus released feedback, rubric assessments and attachment/link references. |
+| `get_course_updates` | Batch update counts, user feed and news created or edited since `since`; includes pinned announcements. This is an on-demand view, not a complete change log. |
+| `get_grade_summary` | Visible grades, grading setup, categories, item rules and official final grade; optional in-memory what-if `scenarios`. |
+| `search_course` | Case-insensitive keyword matches in announcement bodies, assignment instructions, module/topic titles and descriptions, discussions and course descriptions. |
+| `get_my_groups` | Your course groups, sections, group descriptions, enrollment windows and linked group assignments. |
+| `get_calendar` | Reminders, due dates, opening/closing events, locations and recurring occurrences, with UTC and IANA time-zone display. |
+| `get_checklists` | Checklists, categories, item descriptions and due dates. Personal completion is **unknown** because the API does not provide it. |
+
+Existing tools also have more focused options:
+
+- `get_my_courses`: `query` searches names/codes; `includeDetails`, `semester` and `onDate` read course dates and semester metadata; `sort: "recent"` orders by last access. An active enrollment is not proof of the current semester. Courses with unavailable filter metadata are retained with a null match flag.
+- `get_assignments`: `folderId` selects one assignment (requires `courseId`); submission history comes from Brightspace's entity/group response. Quiz attempts are restricted to the authenticated user and only published scores are returned. Quiz settings are course defaults; `attemptsRemaining` stays null because individual special access has not been verified. `attemptsRemainingAssumingDefault` is explicitly conditional.
+- `get_discussions`: supply `forumId` and `topicId`, then optionally `threadId`, `unreadOnly`, `ownOnly` (posts authored by you), `since`, `threadsOnly`, `sort`, `pageNumber` and `pageSize`. Forum-only calls list topics; request a topic to read posts. Forum/topic lists also use `pageNumber` and `pageSize`; follow `nextPage`, or select a forum and follow its `nextTopicPage`.
+- `get_roster`: institution-provided role names replace Purdue-only role IDs. Default staff selection uses a name heuristic and exposes available/unrecognized roles. Use `roleNames` for exact institution labels or `includeStudents` for everyone. Denied classlist access is reported as unavailable.
+- `get_upcoming_due_dates`: returns events explicitly classified as calendar due dates. Use `get_my_work` for deadlines that are absent from the calendar, and `get_calendar` for reminders and availability windows.
+- `get_course_content`: completion uses the stable scheduled-content API; unlisted or optional items have null completion, rather than being reported as unread/incomplete. Reading file text does not update completion.
+
+### Examples
+
+A work overview for the next two weeks and the preceding week's overdue items:
+
+```json
+{ "courseId": 12345, "daysAhead": 14, "daysBehind": 7, "includeUndated": true }
+```
+
+Pass that to `get_my_work`. Submitted assignments and completed quiz attempts are omitted by default, though they may still allow further submissions; use `includeCompleted: true` to include them. Closing dates are separate from due dates. Assignment and quiz dates are course defaults; personal special-access overrides are not verified. Each work item identifies its date scope. Calendar context is capped at the requested limit; use `get_calendar` to continue. Sources can describe the same activity, so source identities are preserved instead of guessing which entries to merge.
+
+A calendar view with recurring occurrences and local display, passed to `get_calendar`:
+
+```json
+{ "courseId": 12345, "start": "2026-09-01T00:00:00Z", "end": "2026-10-01T00:00:00Z", "timeZone": "Europe/Amsterdam" }
+```
+
+The window is start-inclusive/end-exclusive and limited to 366 days. All-day `endDayExclusive` values are preserved as dates, without interpreting them as midnight UTC. If the recurrence route is unavailable, the tool tries ordinary events and reports that occurrences were not expanded. Event types require LE 1.94 or newer; older responses may have an unknown type.
+
+A hypothetical score, passed to `get_grade_summary`:
+
+```json
+{ "courseId": 12345, "scenarios": [{ "gradeItemId": 67890, "points": 8 }] }
+```
+
+Calculations currently support uncategorized numeric **Points** and **Weighted** gradebooks with verified item rules and personal exemption data. Verified ungraded items follow the returned course rule; missing does not automatically mean zero. If an unavailable score could instead be unreleased, the calculation requires an explicit scenario score. Formula grades, categories/drop rules, bonus/extra-credit rules, uncertain exemptions, invalid weights and incomplete sources return `calculation.status: "unsupported"` with reasons. The grade explanation still works when calculations are unavailable. Projections concern the grade objects returned to your account; they cannot infer hidden/unreleased items and are separate from `officialFinal`. No GPA or institution-wide degree rules are inferred.
+
+### Pagination and reliability
+
+Most new list tools accept `offset` (default 0) and `limit` (default 25, maximum 100), returning `items`, `nextOffset` and `matchedCount`. `get_assignments` keeps its `assignments` array and paginates per course. `get_roster` now returns a paginated object instead of a bare array. Follow continuation using the same filters. Offsets describe the current fetched results, not a durable snapshot; data can change between calls.
+
+Discussion filters apply to the requested API page. Follow `nextPage` even when a page contains no matches after filtering; a full final API page can require one extra call to establish the end. Search scans up to 10 forums, 10 topics per forum and the first 100 posts per topic per course; use focused discussion pagination to continue. Document bodies are not indexed by search—open a matching file with `read_course_content`.
+
+Data tools append `readStatus` in a second text block and in `structuredContent`, preserving the main payload in the first text block. It reports source routes, availability (`available`, `forbidden`, `not_found`, `error`), fetch timestamps, cache use, limits and a `partial` flag. Inspect it before treating empty results as “nothing to do.” A 404 can mean an absent feature or inaccessible item, not necessarily an empty dataset. Partial page chains keep previously fetched items. Grade projections stop when required sources are incomplete.
+
+New service reads use a 60-second in-memory cache and normally cap each source at 500 items/10 API pages; individual tools have additional limits recorded in `readStatus.limits`. The work overview inspects at most 100 assignments/quizzes per course; use assignment pagination for the rest. Aggregate calls stop after 200 API reads; narrow course/source filters if the response is partial. See [API contract notes](docs/read-only-api-notes.md) for endpoint details and validation boundaries. No persistent document index, snapshots or alert jobs are created. Awards, competency maps, external systems and outbound alerts remain outside this scope.
 
 ## Commands
 

@@ -77,7 +77,7 @@ describe("get_discussions", () => {
     expect(result.forums[1]).toMatchObject({ forumId: 2, topics: [] });
   });
 
-  it("returns a topic's posts oldest-first, without deleted ones, anonymising as needed", async () => {
+  it("returns a topic's posts in requested API order, without deleted ones, anonymising as needed", async () => {
     const apiClient = fakeApiClient({
       "/forums/1/topics/10/posts/": [
         post(3, "2026-09-03T00:00:00Z", { IsAnonymous: true }),
@@ -91,11 +91,22 @@ describe("get_discussions", () => {
     const result = parse(await call({ courseId: 2, forumId: 1, topicId: 10 }));
 
     expect(result.topic).toMatchObject({ topicId: 10, name: "Topic 10" });
-    expect(result.postCount).toBe(3);
+    expect(result.postCount).toBe(2);
     expect(result.posts.map((p: { postId: number; author: string }) => [p.postId, p.author])).toEqual([
-      [1, "Alice"],
       [3, "Anonymous"],
+      [1, "Alice"],
     ]);
-    expect(result.posts[0].message).toContain("msg 1");
+    expect(result.posts[1].message).toContain("msg 1");
   });
+});
+
+it("paginates forum/topic overviews without reading every post", async () => {
+  const api = fakeApiClient({ "/2/discussions/forums/": [forum(1), forum(2)], "/forums/1": forum(1),
+    "/forums/1/topics/": [topicOf(1, 10), topicOf(1, 11)] });
+  const call = captureTool(registerGetDiscussions, api).call;
+  const first = parse(await call({ courseId: 2, pageSize: 1 }));
+  expect(first.nextPage).toBe(2); expect(first.forums[0].nextTopicPage).toBe(2);
+  const second = parse(await call({ courseId: 2, forumId: 1, pageSize: 1, pageNumber: 2 }));
+  expect(second.forums[0].topics[0].topicId).toBe(11); expect(second.nextPage).toBeNull();
+  expect(api.requested.some(p => p.includes("/posts/"))).toBe(false);
 });

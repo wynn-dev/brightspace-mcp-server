@@ -10,6 +10,7 @@ import { TokenBucket } from "./rate-limiter.js";
 import { discoverVersions } from "./version-discovery.js";
 import { ApiError, RateLimitError, NetworkError } from "./errors.js";
 import { log } from "../utils/logger.js";
+import { recordRead, errorState, countRead } from "../utils/read-status.js";
 
 /**
  * D2L API client with authentication, caching, rate limiting, and version discovery.
@@ -96,6 +97,20 @@ export class D2LApiClient {
    * @throws NetworkError on network/fetch failures
    */
   async get<T>(path: string, options?: { ttl?: number }): Promise<T> {
+    const cached = !!options?.ttl && this.cache.has(path);
+    const fetchedAt = cached ? this.cache.storedAt(path) : null;
+    try {
+      countRead();
+      const data = await this.getJson<T>(path, options);
+      recordRead(path, "available", fetchedAt ?? new Date().toISOString(), cached);
+      return data;
+    } catch (error) {
+      recordRead(path, errorState(error));
+      throw error;
+    }
+  }
+
+  private async getJson<T>(path: string, options?: { ttl?: number }): Promise<T> {
     // Check cache first
     if (options?.ttl && this.cache.has(path)) {
       log("DEBUG", `Cache hit: ${path}`);
@@ -135,6 +150,18 @@ export class D2LApiClient {
    * @throws NetworkError on network/fetch failures
    */
   async getRaw(path: string): Promise<Response> {
+    try {
+      countRead();
+      const response = await this.getRawResponse(path);
+      recordRead(path, "available", new Date().toISOString());
+      return response;
+    } catch (error) {
+      recordRead(path, errorState(error));
+      throw error;
+    }
+  }
+
+  private async getRawResponse(path: string): Promise<Response> {
     // Enforce rate limit
     await this.rateLimiter.consume();
 

@@ -13,6 +13,7 @@ import { secureDownload } from "../utils/download-helpers.js";
 import { MAX_FILE_SIZE } from "../utils/file-validator.js";
 import { extractPdfText } from "../utils/pdf-extractor.js";
 import { isErrnoException } from "../utils/errors.js";
+import { ContentReadError, readContentBytes } from "../utils/content-reader.js";
 import { log } from "../utils/logger.js";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -97,7 +98,7 @@ const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
           attachmentFilename = match[1].replace(/['"]/g, "");
         }
 
-        attachmentBuffer = Buffer.from(await response.arrayBuffer());
+        attachmentBuffer = await readContentBytes(response);
         if (attachmentBuffer.length > MAX_FILE_SIZE) {
           return errorResponse(
             `Attachment too large (${Math.round(attachmentBuffer.length / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
@@ -105,6 +106,7 @@ const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
         }
       }
     } catch (error) {
+      if (error instanceof ContentReadError) return errorResponse(error.message);
       if (isApiStatus(error, 404)) {
         hasAttachment = false;
       } else {
