@@ -167,7 +167,7 @@ async function buildContentTree(
       };
 
       if (item.TopicType === 1) {
-        // File topic — include description and the id download_file needs
+        // File topic — ID shared by read_course_content and download_file.
         topic.description = item.Description?.Text ?? null;
         topic.topicId = item.Id;
       } else if (item.TopicType === 2 || item.TopicType === 3) {
@@ -213,7 +213,7 @@ export const registerGetCourseContent = defineTool(
     name: "get_course_content",
     title: "Get Course Content",
     description:
-      "Fetch the content tree for a course showing modules, topics, files, and links. Use this when the user asks about course materials, lecture slides, uploaded files, content structure, or what's in a course module. Use moduleTitle to filter to a specific module (e.g. 'Labs', 'Staff', 'Homeworks') instead of fetching the entire tree. Use maxDepth to limit recursion depth for a table-of-contents view.",
+      "Fetch the content tree for a course showing modules, topics, files, and links. Use this when the user asks about course materials, lecture slides, uploaded files, content structure, or what's in a course module. Use moduleTitle to filter to a specific module (e.g. 'Labs', 'Staff', 'Homeworks') instead of fetching the entire tree. Use maxDepth to limit recursion depth for a table-of-contents view. To read a PDF, HTML, or plain-text file, call read_course_content with courseId and the file's topicId. Topic descriptions are not the uploaded file body.",
     schema: GetCourseContentSchema,
   },
   async ({ courseId, typeFilter = "all", moduleTitle, maxDepth }, { apiClient }) => {

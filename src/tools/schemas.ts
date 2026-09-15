@@ -59,6 +59,19 @@ export const GetClasslistEmailsSchema = z.object({
     .describe("Course ID to get emails for."),
 });
 
+export const ReadCourseContentSchema = z.object({
+  courseId: z.coerce.number().int().positive().describe("Course ID from get_my_courses."),
+  topicId: z.coerce.number().int().positive().describe("File topic ID from get_course_content."),
+  startPage: z.coerce.number().int().positive().optional()
+    .describe("First physical PDF page to read (1-based). PDF only; omit when using cursor."),
+  endPage: z.coerce.number().int().positive().optional()
+    .describe("Last physical PDF page to read, inclusive. PDF only; omit when using cursor."),
+  maxChars: z.coerce.number().int().min(2).max(50_000).default(20_000)
+    .describe("Maximum extracted text characters per response (default 20000, maximum 50000)."),
+  cursor: z.string().min(1).max(2048).optional()
+    .describe("Opaque nextCursor from a previous response for this document. Omit page selection when continuing."),
+}).strict();
+
 export const DownloadFileSchema = z.object({
   courseId: z.coerce.number().int().positive()
     .describe("Course ID the file belongs to."),
@@ -80,6 +93,9 @@ export const GetSyllabusSchema = z.object({
   downloadPath: z.string().min(1).optional()
     .describe("Absolute path to the directory where the attachment should be saved."),
 });
+
+// Strict parsing also rejects downloadPath when the handler is invoked directly.
+export const ReadOnlyGetSyllabusSchema = GetSyllabusSchema.omit({ downloadPath: true }).strict();
 
 export const GetDiscussionsSchema = z.object({
   courseId: z.coerce.number().int().positive()

@@ -89,8 +89,9 @@ Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/sc
 | `get_assignments` | Assignments with due dates and submission status |
 | `get_upcoming_due_dates` | Due dates across all courses within a window |
 | `get_announcements` | Recent course announcements |
-| `get_syllabus` | Syllabus document for a course |
+| `get_syllabus` | Syllabus text for a course; optional attachment saves are stdio only |
 | `get_course_content` | Module tree and content topics |
+| `read_course_content` | Read PDF, HTML, or plain-text course files in memory, with PDF page references and continuation |
 | `get_discussions` | Discussion forums and recent posts |
 | `get_roster` | Classlist for a course |
 | `get_classlist_emails` | Emails of classmates and instructors |

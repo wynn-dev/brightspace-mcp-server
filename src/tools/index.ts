@@ -14,7 +14,8 @@ export { registerGetCourseContent } from "./get-course-content.js";
 export { registerDownloadFile } from "./download-file.js";
 export { registerGetClasslistEmails } from "./get-classlist-emails.js";
 export { registerGetRoster } from "./get-roster.js";
-export { registerGetSyllabus } from "./get-syllabus.js";
+export { registerGetSyllabus, registerReadOnlyGetSyllabus } from "./get-syllabus.js";
+export { registerReadCourseContent } from "./read-course-content.js";
 export { registerGetDiscussions } from "./get-discussions.js";
 
 // Re-export shared helpers and schemas for convenience

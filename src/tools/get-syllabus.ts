@@ -5,8 +5,8 @@
  */
 
 import { DEFAULT_CACHE_TTLS, isApiStatus } from "../api/index.js";
-import { GetSyllabusSchema } from "./schemas.js";
-import { defineTool } from "./define-tool.js";
+import { GetSyllabusSchema, ReadOnlyGetSyllabusSchema } from "./schemas.js";
+import { defineTool, type ToolBody } from "./define-tool.js";
 import { toolResponse, errorResponse } from "./tool-helpers.js";
 import { convertHtmlToMarkdown } from "../utils/html-converter.js";
 import { secureDownload } from "../utils/download-helpers.js";
@@ -30,14 +30,7 @@ interface DownloadOutcome {
   error?: string;
 }
 
-export const registerGetSyllabus = defineTool(
-  {
-    name: "get_syllabus",
-    title: "Get Course Syllabus",
-    description:
-      "Fetch the syllabus/overview text and optional attachment for a course. Returns the course overview description as markdown. If downloadPath is provided, also downloads the syllabus attachment (e.g. PDF). IMPORTANT: You MUST ask the user where they want to save the file before calling this tool with a downloadPath.",
-    schema: GetSyllabusSchema,
-  },
+const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
   async ({ courseId, downloadPath }, { apiClient }) => {
     if (downloadPath !== undefined) {
       if (!path.isAbsolute(downloadPath)) {
@@ -159,5 +152,26 @@ export const registerGetSyllabus = defineTool(
     if (download) result.download = download;
 
     return toolResponse(result);
-  }
+  };
+
+export const registerGetSyllabus = defineTool(
+  {
+    name: "get_syllabus",
+    title: "Get Course Syllabus",
+    description:
+      "Fetch the syllabus/overview text and optional attachment for a course. Returns the course overview description as markdown. If downloadPath is provided, also downloads the syllabus attachment (e.g. PDF). IMPORTANT: You MUST ask the user where they want to save the file before calling this tool with a downloadPath.",
+    schema: GetSyllabusSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  getSyllabus
+);
+
+export const registerReadOnlyGetSyllabus = defineTool(
+  {
+    name: "get_syllabus",
+    title: "Get Course Syllabus",
+    description: "Read the course overview as markdown and extract text from its PDF attachment. Attachments are processed in memory. Saving files is unavailable over HTTP.",
+    schema: ReadOnlyGetSyllabusSchema,
+  },
+  (args, context) => getSyllabus(args, context)
 );

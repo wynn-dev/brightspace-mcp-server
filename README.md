@@ -54,7 +54,7 @@ MCP_AUTH_TOKEN="$(openssl rand -hex 32)" MCP_HTTP_HOST=0.0.0.0 pnpm run start:ht
 
 Or put those settings in `.env` / `.env.local` (see `.env.example`) and just run `pnpm run start:http`.
 
-This exposes the 11 read-only tools at `http://<host>:8787/mcp` (`download_file` is left out because it would write to the server's disk). Clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`:
+This exposes the 12 read-only tools at `http://<host>:8787/mcp`, including `read_course_content`. `download_file` is left out, and `get_syllabus` rejects `downloadPath` over HTTP, so course files cannot be saved to the server's disk through these tools. Clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`:
 
 ```bash
 claude mcp add --transport http brightspace http://your-host:8787/mcp --header "Authorization: Bearer <token>"
@@ -69,6 +69,25 @@ claude mcp add --transport http brightspace http://your-host:8787/mcp --header "
 | `MCP_ALLOWED_ORIGINS` | — | Browser origins to accept, if any. |
 
 On a headless host, set `"headless": true` in `~/.brightspace-mcp/config.json` so re-login runs without a display (unattended re-login needs a school without an MFA prompt), install Chromium's system libraries on Linux with `pnpm run playwright:deps`, and keep the port behind a VPN or TLS-terminating proxy — the server itself speaks plain HTTP.
+
+## Reading course materials
+
+The `read_course_content` tool reads uploaded **PDF, HTML, and plain-text files** over both HTTP and stdio. Files are fetched with your Brightspace session and processed in memory. It returns extracted text, not the original file, and does not update coursework or completion status.
+
+1. Call `get_course_content` with a `courseId` (and optionally `moduleTitle` or `typeFilter: "file"`) to find a file's `topicId`. Topic descriptions in the tree are separate from uploaded file bodies; HTML pages can also appear as file topics.
+2. Call `read_course_content` with those IDs. For example, to read physical PDF pages 2–4:
+
+   ```json
+   { "courseId": 12345, "topicId": 67890, "startPage": 2, "endPage": 4 }
+   ```
+
+3. If the response contains a non-null `nextCursor`, call again with the same IDs and that cursor, omitting `startPage` and `endPage`. Continue until `nextCursor` is null. The cursor preserves the selected range and rejects continuation if the file changes.
+
+Responses include the document title, filename, content type, and a Brightspace `sourceUrl`. PDF `pages` entries contain physical **1-based** page numbers, text, and offsets within each page; these page numbers may differ from printed labels. HTML returns Markdown and plain-text files return decoded text, both with a text offset. Offsets and text budgets count JavaScript UTF-16 code units; continuation preserves Unicode characters. PDF pages can span multiple responses, and an empty page is reported explicitly.
+
+Each response defaults to **20,000 text characters** (`maxChars`, configurable from 2 to 50,000) and at most **20 PDF pages**, including blank pages. Files have a **50 MiB** streaming limit. Page selection is PDF-only. UTF-8, Unicode BOMs, and supported encodings declared in `Content-Type` are recognized for text files. Continuation re-fetches the document; no document cache or downloaded file is persisted.
+
+Scanned pages need OCR, which is not included. Images, diagrams, and equations may not be represented faithfully by PDF text extraction. Password-protected PDFs, Office documents, external links, videos, and learning-tool activities are unsupported. Access remains subject to your Brightspace account's permissions. Stdio clients can still save originals using `download_file` or `get_syllabus.downloadPath`.
 
 ## Commands
 
