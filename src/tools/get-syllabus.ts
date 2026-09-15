@@ -5,14 +5,14 @@
  */
 
 import { DEFAULT_CACHE_TTLS, isApiStatus } from "../api/index.js";
-import { GetSyllabusSchema } from "./schemas.js";
-import { defineTool } from "./define-tool.js";
+import { GetSyllabusSchema, ReadOnlyGetSyllabusSchema } from "./schemas.js";
+import { defineTool, type ToolBody } from "./define-tool.js";
 import { toolResponse, errorResponse } from "./tool-helpers.js";
 import { convertHtmlToMarkdown } from "../utils/html-converter.js";
 import { secureDownload } from "../utils/download-helpers.js";
-import { MAX_FILE_SIZE } from "../utils/file-validator.js";
 import { extractPdfText } from "../utils/pdf-extractor.js";
 import { isErrnoException } from "../utils/errors.js";
+import { ContentReadError, contentFilename, readContentBytes } from "../utils/content-reader.js";
 import { log } from "../utils/logger.js";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -30,14 +30,7 @@ interface DownloadOutcome {
   error?: string;
 }
 
-export const registerGetSyllabus = defineTool(
-  {
-    name: "get_syllabus",
-    title: "Get Course Syllabus",
-    description:
-      "Fetch the syllabus/overview text and optional attachment for a course. Returns the course overview description as markdown. If downloadPath is provided, also downloads the syllabus attachment (e.g. PDF). IMPORTANT: You MUST ask the user where they want to save the file before calling this tool with a downloadPath.",
-    schema: GetSyllabusSchema,
-  },
+const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
   async ({ courseId, downloadPath }, { apiClient }) => {
     if (downloadPath !== undefined) {
       if (!path.isAbsolute(downloadPath)) {
@@ -78,12 +71,13 @@ export const registerGetSyllabus = defineTool(
 
     const description = overview?.Description?.Html
       ? convertHtmlToMarkdown(overview.Description.Html)
-      : null;
+      : overview?.Description?.Text ? { markdown: overview.Description.Text, html: "" } : null;
 
     // Always attempt to fetch the attachment so we can extract PDF text
     let attachmentBuffer: Buffer | null = null;
     let attachmentFilename = "syllabus";
-    let hasAttachment = false;
+    let hasAttachment: boolean | null = null;
+    let attachmentContentType = "";
 
     try {
       const response = await apiClient.getRaw(apiClient.le(courseId, "/overview/attachment"));
@@ -91,27 +85,12 @@ export const registerGetSyllabus = defineTool(
       if (response.ok) {
         hasAttachment = true;
 
-        const contentLength = parseInt(response.headers.get("Content-Length") ?? "0", 10);
-        if (contentLength > MAX_FILE_SIZE) {
-          return errorResponse(
-            `Attachment too large (${Math.round(contentLength / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
-          );
-        }
-
-        const disposition = response.headers.get("Content-Disposition") ?? "";
-        const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-        if (match?.[1]) {
-          attachmentFilename = match[1].replace(/['"]/g, "");
-        }
-
-        attachmentBuffer = Buffer.from(await response.arrayBuffer());
-        if (attachmentBuffer.length > MAX_FILE_SIZE) {
-          return errorResponse(
-            `Attachment too large (${Math.round(attachmentBuffer.length / 1024 / 1024)}MB). Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024}MB`
-          );
-        }
+        attachmentContentType = response.headers.get("Content-Type") ?? "";
+        attachmentFilename = contentFilename(response.headers.get("Content-Disposition") ?? "", "syllabus");
+        attachmentBuffer = await readContentBytes(response);
       }
     } catch (error) {
+      if (error instanceof ContentReadError) return errorResponse(error.message);
       if (isApiStatus(error, 404)) {
         hasAttachment = false;
       } else {
@@ -121,7 +100,9 @@ export const registerGetSyllabus = defineTool(
 
     let syllabusText: string | null = null;
     let totalPages: number | undefined;
-    if (attachmentBuffer && attachmentFilename.toLowerCase().endsWith(".pdf")) {
+    if (attachmentBuffer && (attachmentFilename.toLowerCase().endsWith(".pdf") ||
+      attachmentContentType.split(";", 1)[0].trim().toLowerCase() === "application/pdf" ||
+      attachmentBuffer.subarray(0, 1024).includes(Buffer.from("%PDF-")))) {
       const extracted = await extractPdfText(attachmentBuffer);
       if (extracted) {
         syllabusText = extracted.text;
@@ -159,5 +140,26 @@ export const registerGetSyllabus = defineTool(
     if (download) result.download = download;
 
     return toolResponse(result);
-  }
+  };
+
+export const registerGetSyllabus = defineTool(
+  {
+    name: "get_syllabus",
+    title: "Get Course Syllabus",
+    description:
+      "Fetch the syllabus/overview text and optional attachment for a course. Returns the course overview description as markdown. If downloadPath is provided, also downloads the syllabus attachment (e.g. PDF). IMPORTANT: You MUST ask the user where they want to save the file before calling this tool with a downloadPath.",
+    schema: GetSyllabusSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  getSyllabus
+);
+
+export const registerReadOnlyGetSyllabus = defineTool(
+  {
+    name: "get_syllabus",
+    title: "Get Course Syllabus",
+    description: "Read the course overview as markdown and extract text from its PDF attachment. Attachments are processed in memory. Saving files is unavailable over HTTP.",
+    schema: ReadOnlyGetSyllabusSchema,
+  },
+  (args, context) => getSyllabus(args, context)
 );

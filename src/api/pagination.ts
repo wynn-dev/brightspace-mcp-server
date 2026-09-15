@@ -6,6 +6,7 @@
 
 import type { D2LApiClient } from "./client.js";
 import { log } from "../utils/logger.js";
+import { recordLimit, recordRead, errorState } from "../utils/read-status.js";
 
 /** LP envelope (e.g. /enrollments/myenrollments/): next page via ?bookmark=. */
 export interface LpPagedResult<T> {
@@ -27,6 +28,8 @@ export interface PageOptions {
   maxItems?: number;
   /** Name used in log messages; defaults to the path. */
   label?: string;
+  /** Called whenever an incomplete result is returned. */
+  onIncomplete?: () => void;
 }
 
 const DEFAULT_MAX_PAGES = 20;
@@ -59,6 +62,7 @@ export function unwrapObjects<T>(raw: T[] | { Objects?: T[] } | null | undefined
 }
 
 function warnCapped(maxPages: number, label: string): void {
+  recordLimit(`Pagination capped at ${maxPages} pages: ${label}`);
   log("WARN", `Pagination: stopped after ${maxPages} pages for ${label}; results may be incomplete`);
 }
 
@@ -71,15 +75,35 @@ export async function getAllLpPages<T>(
   const { ttl, maxPages = DEFAULT_MAX_PAGES, maxItems, label = path } = options;
   const items: T[] = [];
   let pagePath = path;
+  const visited = new Set<string>();
 
   for (let page = 1; ; page++) {
-    const result = await client.get<LpPagedResult<T>>(pagePath, { ttl });
+    if (visited.has(pagePath)) { options.onIncomplete?.(); recordLimit(`Repeated pagination page: ${label}`); break; }
+    visited.add(pagePath);
+    let result: LpPagedResult<T>;
+    try {
+      result = await client.get<LpPagedResult<T>>(pagePath, { ttl });
+      if (!Array.isArray(result?.Items)) throw new Error(`Invalid paged response: ${label}`);
+    }
+    catch (error) {
+      if (!items.length) throw error;
+      recordRead(pagePath, errorState(error));
+      options.onIncomplete?.(); recordLimit(`Later page unavailable: ${label}`);
+      break;
+    }
     items.push(...(result.Items ?? []));
 
     const bookmark = result.PagingInfo?.HasMoreItems ? result.PagingInfo.Bookmark : null;
-    if (!bookmark) break;
-    if (maxItems !== undefined && items.length >= maxItems) break;
+    if (!bookmark) {
+      if (result.PagingInfo?.HasMoreItems) {
+        options.onIncomplete?.();
+        recordLimit(`Missing pagination bookmark: ${label}`);
+      }
+      break;
+    }
+    if (maxItems !== undefined && items.length >= maxItems) { options.onIncomplete?.(); recordLimit(`Item limit reached: ${label}`); break; }
     if (page >= maxPages) {
+      options.onIncomplete?.();
       warnCapped(maxPages, label);
       break;
     }
@@ -98,21 +122,41 @@ export async function getAllObjectListPages<T>(
   const { ttl, maxPages = DEFAULT_MAX_PAGES, maxItems, label = path } = options;
   const items: T[] = [];
   let pagePath = path;
+  const visited = new Set<string>();
 
   for (let page = 1; ; page++) {
-    const result = await client.get<ObjectListPage<T> | T[]>(pagePath, { ttl });
+    if (visited.has(pagePath)) { options.onIncomplete?.(); recordLimit(`Repeated pagination page: ${label}`); break; }
+    visited.add(pagePath);
+    let result: ObjectListPage<T> | T[];
+    try {
+      result = await client.get<ObjectListPage<T> | T[]>(pagePath, { ttl });
+      if (!Array.isArray(result) && !Array.isArray(result?.Objects)) throw new Error(`Invalid paged response: ${label}`);
+    }
+    catch (error) {
+      if (!items.length) throw error;
+      recordRead(pagePath, errorState(error));
+      options.onIncomplete?.(); recordLimit(`Later page unavailable: ${label}`);
+      break;
+    }
     items.push(...unwrapObjects(result));
 
     const next = Array.isArray(result) ? null : result.Next ?? null;
     if (!next) break;
-    if (maxItems !== undefined && items.length >= maxItems) break;
+    if (maxItems !== undefined && items.length >= maxItems) { options.onIncomplete?.(); recordLimit(`Item limit reached: ${label}`); break; }
     if (page >= maxPages) {
+      options.onIncomplete?.();
       warnCapped(maxPages, label);
       break;
     }
-    const nextPath = nextToPath(next);
+    let nextPath: string;
+    try {
+      if (typeof next !== "string") throw new Error("Invalid continuation URL");
+      nextPath = nextToPath(next);
+    } catch {
+      options.onIncomplete?.(); recordLimit(`Invalid pagination continuation: ${label}`); break;
+    }
     // Defensive: a server echoing the current page would loop until maxPages
-    if (nextPath === pagePath) break;
+    if (nextPath === pagePath) { options.onIncomplete?.(); recordLimit(`Repeated pagination page: ${label}`); break; }
     pagePath = nextPath;
   }
 

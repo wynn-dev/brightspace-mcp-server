@@ -4,11 +4,13 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { DEFAULT_CACHE_TTLS, isApiStatus, type D2LApiClient } from "../api/index.js";
+import { DEFAULT_CACHE_TTLS, type D2LApiClient } from "../api/index.js";
 import { GetCourseContentSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { toolResponse } from "./tool-helpers.js";
 import { convertHtmlToMarkdown } from "../utils/html-converter.js";
+import { readList, id, str, num } from "../services/data.js";
+import { recordLimit } from "../utils/read-status.js";
 import { log } from "../utils/logger.js";
 
 // D2L Content API response type
@@ -36,9 +38,8 @@ interface ContentObject {
 
 // Progress tracking
 interface ContentProgress {
-  UserId: number;
-  ContentObjectId: number;
-  IsRead: boolean;
+  ItemId: number;
+  CompletionType: number | null;
   DateCompleted: string | null;
 }
 
@@ -62,7 +63,7 @@ interface TopicNode {
   isHidden: boolean;
   isLocked: boolean;
   dueDate: string | null;
-  isCompleted: boolean;
+  isCompleted: boolean | null;
   completedDate: string | null;
   description?: string | null;
   topicId?: number;
@@ -107,12 +108,15 @@ async function buildContentTree(
   progressMap: Map<number, ContentProgress>,
   typeFilter: string,
   maxDepth?: number,
-  currentDepth: number = 0
+  currentDepth: number = 0,
+  visited: Set<number> = new Set()
 ): Promise<ContentNode[]> {
   const tree: ContentNode[] = [];
 
   for (const item of modules) {
     if (item.Type === 0) {
+      if (visited.has(item.Id) || visited.size >= 200) { recordLimit("Content traversal cycle or 200-module limit"); continue; }
+      visited.add(item.Id);
       // Module — fetch children recursively (unless maxDepth reached)
       let processedChildren: ContentNode[] = [];
 
@@ -128,10 +132,11 @@ async function buildContentTree(
         }
 
         processedChildren = await buildContentTree(
-          apiClient, courseId, children, progressMap, typeFilter, maxDepth, currentDepth + 1
+          apiClient, courseId, children, progressMap, typeFilter, maxDepth, currentDepth + 1, visited
         );
       }
 
+      if (maxDepth !== undefined && currentDepth >= maxDepth) recordLimit("Content depth limited by maxDepth");
       // Only include module if it has matching children (or filter is 'all')
       if (typeFilter === "all" || processedChildren.length > 0) {
         tree.push({
@@ -162,12 +167,12 @@ async function buildContentTree(
         isHidden: item.IsHidden,
         isLocked: item.IsLocked,
         dueDate: item.DueDate ?? null,
-        isCompleted: topicProgress?.IsRead ?? false,
+        isCompleted: topicProgress?.DateCompleted ? true : topicProgress && [1, 2].includes(topicProgress.CompletionType ?? -1) ? false : null,
         completedDate: topicProgress?.DateCompleted ?? null,
       };
 
       if (item.TopicType === 1) {
-        // File topic — include description and the id download_file needs
+        // File topic — ID shared by read_course_content and download_file.
         topic.description = item.Description?.Text ?? null;
         topic.topicId = item.Id;
       } else if (item.TopicType === 2 || item.TopicType === 3) {
@@ -213,7 +218,7 @@ export const registerGetCourseContent = defineTool(
     name: "get_course_content",
     title: "Get Course Content",
     description:
-      "Fetch the content tree for a course showing modules, topics, files, and links. Use this when the user asks about course materials, lecture slides, uploaded files, content structure, or what's in a course module. Use moduleTitle to filter to a specific module (e.g. 'Labs', 'Staff', 'Homeworks') instead of fetching the entire tree. Use maxDepth to limit recursion depth for a table-of-contents view.",
+      "Fetch the content tree for a course showing modules, topics, files, and links. Use this when the user asks about course materials, lecture slides, uploaded files, content structure, or what's in a course module. Use moduleTitle to filter to a specific module (e.g. 'Labs', 'Staff', 'Homeworks') instead of fetching the entire tree. Use maxDepth to limit recursion depth for a table-of-contents view. To read a PDF, HTML, or plain-text file, call read_course_content with courseId and the file's topicId. Topic descriptions are not the uploaded file body.",
     schema: GetCourseContentSchema,
   },
   async ({ courseId, typeFilter = "all", moduleTitle, maxDepth }, { apiClient }) => {
@@ -227,22 +232,12 @@ export const registerGetCourseContent = defineTool(
       rootModules = rootModules.filter((m) => m.Title.toLowerCase().includes(searchTerm));
     }
 
-    // User progress is optional — 404/403 just means none is available
-    let progressArray: ContentProgress[] = [];
-    try {
-      progressArray = await apiClient.get<ContentProgress[]>(
-        apiClient.le(courseId, "/content/userprogress/"),
-        { ttl: DEFAULT_CACHE_TTLS.courseContent }
-      );
-    } catch (error) {
-      if (!isApiStatus(error, 404, 403)) {
-        log("DEBUG", `Failed to fetch progress for course ${courseId}`, error);
-      }
-    }
-
+    // Stable scheduled-content API. Unlisted/optional items have unknown completion.
+    const scheduled = await readList(apiClient, apiClient.le(courseId, "/content/myItems/"));
     const progressMap = new Map<number, ContentProgress>();
-    for (const p of progressArray) {
-      progressMap.set(p.ContentObjectId, p);
+    for (const p of scheduled.data ?? []) {
+      const itemId = id(p.ItemId);
+      if (itemId) progressMap.set(itemId, { ItemId: itemId, CompletionType: num(p.CompletionType), DateCompleted: str(p.DateCompleted) });
     }
 
     const contentTree = await buildContentTree(

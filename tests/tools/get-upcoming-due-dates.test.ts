@@ -3,6 +3,7 @@ import { registerGetUpcomingDueDates } from "../../src/tools/get-upcoming-due-da
 import { captureTool, fakeApiClient, parse, enrollment, enrollmentsPage, objectPage } from "./helpers.js";
 
 const event = (id: string, endDate: string, orgUnitId = 1) => ({
+  EventType: 6,
   CalendarEventId: id,
   Title: `Event ${id}`,
   OrgUnitName: "Course",
@@ -77,4 +78,12 @@ describe("get_upcoming_due_dates", () => {
       isAllDay: false,
     });
   });
+});
+
+it("does not label reminders or unknown event types as due dates", async () => {
+  const api = fakeApiClient({ "/myEvents/": [
+    { CalendarEventId: "reminder", EventType: 1 }, { CalendarEventId: "unknown" },
+  ] });
+  const result = await captureTool(registerGetUpcomingDueDates, api).call({ courseId: 1 });
+  expect(parse(result)).toEqual([]); expect(result.structuredContent?.readStatus).toMatchObject({ partial: true });
 });

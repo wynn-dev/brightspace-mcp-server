@@ -23,7 +23,7 @@ const AUTH_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
  * project root as CWD; the auth CLI also loads .env.local / .env itself.
  */
 export class AuthRunner {
-  private running = false;
+  private pending: Promise<boolean> | null = null;
   private readonly scriptPath: string;
   private readonly projectRoot: string;
 
@@ -37,40 +37,41 @@ export class AuthRunner {
   /**
    * Spawn the auth CLI and wait for it to complete.
    * Returns true if authentication succeeded, false otherwise.
-   * Prevents concurrent auth attempts via a simple mutex.
+   * Concurrent callers share the same attempt and receive its result.
    */
-  async run(): Promise<boolean> {
-    if (this.running) {
-      log("DEBUG", "Auth already running, skipping duplicate attempt");
-      return false;
+  run(): Promise<boolean> {
+    if (this.pending) {
+      log("DEBUG", "Auth already running, waiting for the same attempt");
+      return this.pending;
     }
 
-    this.running = true;
-    try {
-      log("INFO", "Auto-launching auth CLI for re-authentication...");
+    this.pending = this.authenticate().finally(() => {
+      this.pending = null;
+    });
+    return this.pending;
+  }
 
-      return await new Promise<boolean>((resolve) => {
-        execFile(
-          process.execPath, // use the same Node binary
-          [this.scriptPath],
-          {
-            timeout: AUTH_TIMEOUT_MS,
-            cwd: this.projectRoot,
-            env: { ...process.env },
-          },
-          (error, _stdout, _stderr) => {
-            if (error) {
-              log("ERROR", "Auto-auth process failed", error.message);
-              resolve(false);
-            } else {
-              log("INFO", "Auto-auth completed successfully");
-              resolve(true);
-            }
-          },
-        );
-      });
-    } finally {
-      this.running = false;
-    }
+  private authenticate(): Promise<boolean> {
+    log("INFO", "Auto-launching auth CLI for re-authentication...");
+    return new Promise<boolean>((resolve) => {
+      execFile(
+        process.execPath,
+        [this.scriptPath],
+        {
+          timeout: AUTH_TIMEOUT_MS,
+          cwd: this.projectRoot,
+          env: { ...process.env },
+        },
+        (error, _stdout, _stderr) => {
+          if (error) {
+            log("ERROR", "Auto-auth process failed", error.message);
+            resolve(false);
+          } else {
+            log("INFO", "Auto-auth completed successfully");
+            resolve(true);
+          }
+        },
+      );
+    });
   }
 }

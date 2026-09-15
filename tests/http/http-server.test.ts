@@ -5,6 +5,10 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { startHttpServer, type RunningHttpServer } from "../../src/http/server.js";
 import { createMcpServer } from "../../src/server.js";
 import type { AppConfig } from "../../src/types/index.js";
+import { makePdf } from "../fixtures/pdf.js";
+import { secureDownload } from "../../src/utils/download-helpers.js";
+
+vi.mock("../../src/utils/download-helpers.js", () => ({ secureDownload: vi.fn() }));
 
 /**
  * End-to-end tests for the Streamable HTTP transport, driven by the SDK's
@@ -24,14 +28,29 @@ const config = {
 
 const apiClient = {
   lp: (p: string) => `/d2l/api/lp/1.0${p}`,
-  le: (p: string) => `/d2l/api/le/1.0${p}`,
-  get: vi.fn(async () => ({
-    Items: [
-      {
-        OrgUnit: { Id: 43105, Name: "Bachelor Computer Science", Code: "B+TI" },
-        Access: { ClasslistRoleName: "Regular Student", IsActive: true, LastAccessed: null },
-      },
-    ],
+  leGlobal: (p: string) => `/d2l/api/le/1.0${p}`,
+  le: (courseId: number, p: string) => `/d2l/api/le/1.0/${courseId}${p}`,
+  get: vi.fn(async (path: string) => {
+    if (path.endsWith("/users/whoami")) return { Identifier: "42" };
+    if (path.endsWith("/grades/setup/")) return { GradingSystem: "Points", IsNullGradeZero: false };
+    if (path.includes("/grades/exemptions/")) return { Items: [] };
+    if (path.includes("/grades/final/")) return { DisplayedGrade: null };
+    if (path.endsWith("/content/toc")) return { Modules: [] };
+    if (path.includes("/courses/")) return { Name: "Course", Description: null };
+    if (["/dropbox/", "/quizzes/", "/calendar/", "/checklists/", "/groups/", "/groupcategories/", "/sections/", "/feed/", "/updates/", "/news/", "/grades/", "/discussions/", "/content/myItems/"].some(p => path.includes(p))) return [];
+    if (path.includes("/content/topics/")) return { Title: "Lecture notes", TopicType: 1 };
+    if (path.endsWith("/overview")) return { Description: null };
+    return {
+      Items: [
+        {
+          OrgUnit: { Id: 43105, Name: "Bachelor Computer Science", Code: "B+TI" },
+          Access: { ClasslistRoleName: "Regular Student", IsActive: true, LastAccessed: null },
+        },
+      ],
+    };
+  }),
+  getRaw: vi.fn(async () => new Response(new Uint8Array(makePdf(["Lecture one", "Lecture two"])), {
+    headers: { "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="notes.pdf"' },
   })),
 };
 
@@ -168,10 +187,12 @@ describe("Streamable HTTP MCP server", () => {
 
         const { tools } = await client.listTools();
         const names = tools.map((t) => t.name).sort();
-        expect(names).toHaveLength(11);
+        expect(names).toHaveLength(20);
         expect(names).toContain("get_my_courses");
         expect(names).toContain("check_auth");
+        expect(names).toContain("read_course_content");
         expect(names).not.toContain("download_file");
+        expect(tools.find((t) => t.name === "get_syllabus")?.inputSchema.properties).not.toHaveProperty("downloadPath");
         for (const tool of tools) {
           expect(tool.annotations?.readOnlyHint, `${tool.name} should be readOnlyHint`).toBe(true);
         }
@@ -193,6 +214,65 @@ describe("Streamable HTTP MCP server", () => {
         const auth = await client.callTool({ name: "check_auth", arguments: {} });
         const authText = (auth.content as Array<{ type: string; text: string }>)[0].text;
         expect(authText).toMatch(/^Authenticated with Brightspace/);
+      } finally {
+        await transport.terminateSession();
+        await client.close();
+      }
+    });
+
+    it("runs all new workflows through the HTTP wire without file writes", async () => {
+      const { client, transport } = await connect(running);
+      const calls = [
+        ["get_my_work", { courseId: 43105 }],
+        ["get_submission_history", { courseId: 43105, folderId: 1 }],
+        ["get_course_updates", { courseId: 43105, since: "2026-01-01T00:00:00Z" }],
+        ["get_grade_summary", { courseId: 43105 }],
+        ["search_course", { courseId: 43105, query: "lecture" }],
+        ["get_my_groups", { courseId: 43105 }],
+        ["get_calendar", { courseId: 43105, start: "2026-09-01T00:00:00Z", end: "2026-10-01T00:00:00Z" }],
+        ["get_checklists", { courseId: 43105 }],
+      ] as const;
+      try {
+        for (const [name, args] of calls) {
+          const result = await client.callTool({ name, arguments: args });
+          expect(result.isError, name).not.toBe(true);
+          expect(result.structuredContent, name).toHaveProperty("readStatus");
+        }
+        expect(secureDownload).not.toHaveBeenCalled();
+      } finally {
+        await transport.terminateSession();
+        await client.close();
+      }
+    });
+
+    it("reads actual PDF text and page references over HTTP without saving files", async () => {
+      const { client, transport } = await connect(running);
+      try {
+        const result = await client.callTool({ name: "read_course_content", arguments: { courseId: 3, topicId: 10, startPage: 2 } });
+        expect(result.isError).toBeFalsy();
+        const payload = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+        expect(payload.pages).toEqual([{ page: 2, offset: 0, text: "Lecture two", hasText: true }]);
+        expect(payload.nextCursor).toBeNull();
+        expect(secureDownload).not.toHaveBeenCalled();
+      } finally {
+        await transport.terminateSession();
+        await client.close();
+      }
+    });
+
+    it("rejects syllabus downloadPath over HTTP before fetching or saving", async () => {
+      const { client, transport } = await connect(running);
+      try {
+        const count = apiClient.get.mock.calls.length;
+        const result = await client.callTool({ name: "get_syllabus", arguments: { courseId: 3, downloadPath: "/tmp" } });
+        expect(result.isError).toBe(true);
+        expect(apiClient.get).toHaveBeenCalledTimes(count);
+        expect(secureDownload).not.toHaveBeenCalled();
+
+        const read = await client.callTool({ name: "get_syllabus", arguments: { courseId: 3 } });
+        expect(read.isError).toBeFalsy();
+        expect(JSON.parse((read.content as Array<{ text: string }>)[0].text).syllabusText).toContain("Lecture one");
+        expect(secureDownload).not.toHaveBeenCalled();
       } finally {
         await transport.terminateSession();
         await client.close();

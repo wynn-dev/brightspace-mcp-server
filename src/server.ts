@@ -13,6 +13,14 @@ import type { TokenManager, AuthRunner } from "./auth/index.js";
 import type { AppConfig } from "./types/index.js";
 import { log } from "./utils/logger.js";
 import {
+  registerGetCalendar,
+  registerGetSubmissionHistory,
+  registerGetMyWork,
+  registerGetCourseUpdates,
+  registerGetMyGroups,
+  registerGetChecklists,
+  registerGetGradeSummary,
+  registerSearchCourse,
   registerGetMyCourses,
   registerGetUpcomingDueDates,
   registerGetMyGrades,
@@ -23,6 +31,8 @@ import {
   registerGetClasslistEmails,
   registerGetRoster,
   registerGetSyllabus,
+  registerReadOnlyGetSyllabus,
+  registerReadCourseContent,
   registerGetDiscussions,
 } from "./tools/index.js";
 
@@ -45,7 +55,7 @@ interface McpServerDeps {
   /**
    * download_file writes to the disk of whatever host runs the server, which
    * is useless (and surprising) for remote HTTP clients. Defaults to true;
-   * the HTTP entry point turns it off.
+   * the HTTP entry point turns it off. Also disables syllabus attachment saves.
    */
   includeDownloadFile?: boolean;
 }
@@ -130,18 +140,28 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }
   );
 
+  registerGetCalendar(server, apiClient, config);
+  registerGetSubmissionHistory(server, apiClient, config);
+  registerGetMyWork(server, apiClient, config);
+  registerGetCourseUpdates(server, apiClient, config);
+  registerGetMyGroups(server, apiClient, config);
+  registerGetChecklists(server, apiClient, config);
+  registerGetGradeSummary(server, apiClient, config);
+  registerSearchCourse(server, apiClient, config);
   registerGetMyCourses(server, apiClient, config);
   registerGetUpcomingDueDates(server, apiClient, config);
   registerGetMyGrades(server, apiClient, config);
   registerGetAnnouncements(server, apiClient, config);
   registerGetAssignments(server, apiClient, config);
   registerGetCourseContent(server, apiClient, config);
+  registerReadCourseContent(server, apiClient, config);
   if (includeDownloadFile) registerDownloadFile(server, apiClient, config);
   registerGetClasslistEmails(server, apiClient, config);
   registerGetRoster(server, apiClient, config);
-  registerGetSyllabus(server, apiClient, config);
+  const registerSyllabus = includeDownloadFile ? registerGetSyllabus : registerReadOnlyGetSyllabus;
+  registerSyllabus(server, apiClient, config);
   registerGetDiscussions(server, apiClient, config);
 
-  log("DEBUG", `MCP tools registered (${includeDownloadFile ? 12 : 11} including check_auth)`);
+  log("DEBUG", `MCP tools registered (${includeDownloadFile ? 21 : 20} including check_auth)`);
   return server;
 }

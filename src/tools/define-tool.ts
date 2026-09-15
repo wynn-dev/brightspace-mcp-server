@@ -11,6 +11,7 @@ import type { D2LApiClient } from "../api/index.js";
 import type { AppConfig } from "../types/index.js";
 import { sanitizeError } from "./tool-helpers.js";
 import { log } from "../utils/logger.js";
+import { withReadStatus } from "../utils/read-status.js";
 
 export interface ToolContext {
   apiClient: D2LApiClient;
@@ -59,7 +60,7 @@ export function defineTool<S extends z.ZodObject>(
   return (server, apiClient, config) => {
     const ctx: ToolContext = { apiClient, config };
 
-    const handler = async (rawArgs: unknown): Promise<CallToolResult> => {
+    const handler = async (rawArgs: unknown): Promise<CallToolResult> => withReadStatus(async () => {
       try {
         log("DEBUG", `${name} tool called`, { args: rawArgs });
         const args = schema.parse(rawArgs);
@@ -67,7 +68,7 @@ export function defineTool<S extends z.ZodObject>(
       } catch (error) {
         return sanitizeError(error);
       }
-    };
+    });
 
     // ToolCallback<S> is a conditional type over the schema that TypeScript
     // cannot resolve while S is still generic; the cast is safe because the

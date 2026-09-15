@@ -80,21 +80,35 @@ pnpm run auth
 
 ## Available tools
 
-Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/schemas.ts`:
+Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/schemas.ts` and `src/tools/workflow-schemas.ts`:
 
 | Tool | Purpose |
 |------|---------|
-| `get_my_courses` | List enrolled courses |
+| `check_auth` | Authentication status |
+| `get_my_courses` | Discover enrolled courses by name/code, semester, dates and recent access |
 | `get_my_grades` | Grades for a course or all courses |
 | `get_assignments` | Assignments with due dates and submission status |
 | `get_upcoming_due_dates` | Due dates across all courses within a window |
 | `get_announcements` | Recent course announcements |
-| `get_syllabus` | Syllabus document for a course |
+| `get_syllabus` | Syllabus text for a course; optional attachment saves are stdio only |
 | `get_course_content` | Module tree and content topics |
-| `get_discussions` | Discussion forums and recent posts |
-| `get_roster` | Classlist for a course |
+| `read_course_content` | Read PDF, HTML, or plain-text course files in memory, with PDF page references and continuation |
+| `get_discussions` | Forums/topics or paginated posts, thread, unread, recent and own-author filters; preserves read state |
+| `get_roster` | Paginated classlist with institution role-name selection and explicit access status |
 | `get_classlist_emails` | Emails of classmates and instructors |
+| `get_my_work` | Overdue/upcoming/undated work with explicit completion and source coverage |
+| `get_submission_history` | Individual/group submissions and published feedback/rubrics |
+| `get_course_updates` | On-demand update counts, recent feed and edited news |
+| `get_grade_summary` | Grade rules and conditional in-memory projections; official final separate |
+| `search_course` | Bounded keyword search with coverage and source references |
+| `get_my_groups` | Own groups, sections and linked group assignments |
+| `get_calendar` | Full calendar with event types, recurrence, locations and time-zone display |
+| `get_checklists` | Checklist categories/items/dates; completion unknown |
 | `download_file` | Download a file attachment (PDF, slides, etc.) — stdio only |
+
+All data tools include a second text block plus `structuredContent.readStatus` with source freshness, access failures and limits. Check `partial` before interpreting an empty result. Follow `nextOffset` or discussion `nextPage` with unchanged filters. File reading uses its separate content-bound `nextCursor`. Never equate unavailable data with no work, active enrollment with current semester, or null grades with zero.
+
+The HTTP transport exposes 20 tools; stdio adds `download_file`. HTTP `get_syllabus` uses a strict schema without `downloadPath`. Read-only tools must use GET-only API methods and must not write files or update read/completion state. Grade scenarios must fail closed when rules, exemptions or pagination completeness cannot be verified.
 
 ## Codebase map
 
@@ -109,10 +123,13 @@ src/
   update.ts                 git-pull self-updater (`pnpm run update`)
   tools/
     index.ts                Tool registry
-    schemas.ts              Zod input schemas for every tool
+    schemas.ts              Core Zod input schemas
+    workflow-schemas.ts     Shared workflow schemas and pagination
+    define-tool.ts          Validation, sanitized errors and per-call read tracing
     tool-helpers.ts         Shared helpers (course resolution, formatting)
     get-*.ts                One file per tool
     download-file.ts        Binary download + file-type detection
+  services/                 Shared assignments, calendar, discussions, grades and API boundary mapping
   api/
     client.ts               HTTP client wrapping the Valence/D2L API
     version-discovery.ts    Resolves per-product API versions
@@ -136,6 +153,7 @@ src/
     file-validator.ts       Magic-byte file-type checks
     html-converter.ts       HTML to Markdown via turndown
     pdf-extractor.ts        PDF text extraction via unpdf
+    read-status.ts          Async-local source freshness, partial results and read budgets
     logger.ts               Structured logging
     errors.ts               User-facing error taxonomy
   types/                    Shared TypeScript types

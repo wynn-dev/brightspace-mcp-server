@@ -5,6 +5,7 @@
  */
 
 import { z } from "zod";
+import { paging, instant } from "./workflow-schemas.js";
 
 /**
  * Zod schemas for MCP tool input validation.
@@ -13,6 +14,11 @@ import { z } from "zod";
  */
 
 export const GetMyCoursesSchema = z.object({
+  query: z.string().trim().min(1).max(200).optional(),
+  includeDetails: z.boolean().default(false),
+  semester: z.string().trim().min(1).max(200).optional(),
+  onDate: z.iso.date().optional(),
+  sort: z.enum(["enrollment", "recent", "name"]).default("enrollment"),
   // Intentionally has no default: omitting it falls back to the configured
   // D2L_ACTIVE_ONLY / config.json policy (true unless the user changed it).
   // A default here would silently override that configuration on every call.
@@ -39,6 +45,9 @@ export const GetAnnouncementsSchema = z.object({
 });
 
 export const GetAssignmentsSchema = z.object({
+  folderId: z.coerce.number().int().positive().optional(),
+  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
   courseId: z.coerce.number().int().positive().optional()
     .describe("Course ID to get assignments for. If omitted, returns assignments for all enrolled courses."),
 });
@@ -58,6 +67,19 @@ export const GetClasslistEmailsSchema = z.object({
   courseId: z.coerce.number().int().positive()
     .describe("Course ID to get emails for."),
 });
+
+export const ReadCourseContentSchema = z.object({
+  courseId: z.coerce.number().int().positive().describe("Course ID from get_my_courses."),
+  topicId: z.coerce.number().int().positive().describe("File topic ID from get_course_content."),
+  startPage: z.coerce.number().int().positive().optional()
+    .describe("First physical PDF page to read (1-based). PDF only; omit when using cursor."),
+  endPage: z.coerce.number().int().positive().optional()
+    .describe("Last physical PDF page to read, inclusive. PDF only; omit when using cursor."),
+  maxChars: z.coerce.number().int().min(2).max(50_000).default(20_000)
+    .describe("Maximum extracted text characters per response (default 20000, maximum 50000)."),
+  cursor: z.string().min(1).max(2048).optional()
+    .describe("Opaque nextCursor from a previous response for this document. Omit page selection when continuing."),
+}).strict();
 
 export const DownloadFileSchema = z.object({
   courseId: z.coerce.number().int().positive()
@@ -81,7 +103,18 @@ export const GetSyllabusSchema = z.object({
     .describe("Absolute path to the directory where the attachment should be saved."),
 });
 
+// Strict parsing also rejects downloadPath when the handler is invoked directly.
+export const ReadOnlyGetSyllabusSchema = GetSyllabusSchema.omit({ downloadPath: true }).strict();
+
 export const GetDiscussionsSchema = z.object({
+  threadId: z.coerce.number().int().positive().optional(),
+  pageNumber: z.coerce.number().int().min(1).max(1000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  unreadOnly: z.boolean().default(false),
+  ownOnly: z.boolean().default(false),
+  threadsOnly: z.boolean().default(false),
+  since: instant.optional(),
+  sort: z.enum(["creationdate", "-creationdate", "threaded"]).default("-creationdate"),
   courseId: z.coerce.number().int().positive()
     .describe("Course ID to get discussion boards for."),
   forumId: z.coerce.number().int().positive().optional()
@@ -91,6 +124,8 @@ export const GetDiscussionsSchema = z.object({
 });
 
 export const GetRosterSchema = z.object({
+  ...paging,
+  roleNames: z.array(z.string().min(1).max(100)).min(1).max(20).optional(),
   courseId: z.coerce.number().int().positive()
     .describe("Course ID to get roster for."),
   includeStudents: z.boolean().default(false)

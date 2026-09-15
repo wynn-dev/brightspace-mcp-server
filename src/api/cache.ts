@@ -9,6 +9,7 @@
 
 interface CacheEntry<T> {
   data: T;
+  storedAt: string;
   timerId: NodeJS.Timeout;
 }
 
@@ -26,9 +27,10 @@ export class TTLCache<T = unknown> {
     const timerId = setTimeout(() => {
       this.cache.delete(key);
     }, ttlMs);
+    timerId.unref();
 
     // Store entry
-    this.cache.set(key, { data: value, timerId });
+    this.cache.set(key, { data: value, timerId, storedAt: new Date().toISOString() });
   }
 
   get(key: string): T | undefined {
@@ -39,6 +41,8 @@ export class TTLCache<T = unknown> {
   has(key: string): boolean {
     return this.cache.has(key);
   }
+
+  storedAt(key: string): string | null { return this.cache.get(key)?.storedAt ?? null; }
 
   delete(key: string): boolean {
     const entry = this.cache.get(key);

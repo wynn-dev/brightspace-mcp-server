@@ -100,6 +100,23 @@ describe("getAllLpPages", () => {
 });
 
 describe("getAllObjectListPages", () => {
+  it.each([{}, null, { Objects: "invalid" }])("preserves previous pages when a later response is malformed: %j", async bad => {
+    const incomplete = vi.fn();
+    expect(await getAllObjectListPages(fakeClient({ "/o": le([1], "/next"), "/next": bad }), "/o", { onIncomplete: incomplete })).toEqual([1]);
+    expect(incomplete).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the current page when its continuation URL is malformed", async () => {
+    const incomplete = vi.fn();
+    expect(await getAllObjectListPages(fakeClient({ "/o": le([1], "https://[") }), "/o", { onIncomplete: incomplete })).toEqual([1]);
+    expect(incomplete).toHaveBeenCalledOnce();
+  });
+
+  it("preserves LP pages when a later envelope is malformed", async () => {
+    const incomplete = vi.fn();
+    expect(await getAllLpPages(fakeClient({ "/o": lp([1], "next"), "/o?bookmark=next": {} }), "/o", { onIncomplete: incomplete })).toEqual([1]);
+    expect(incomplete).toHaveBeenCalledOnce();
+  });
   it("follows absolute Next URLs as host-less paths", async () => {
     const client = fakeClient({
       "/o": le([1], "https://lms.example.edu/o?page=2"),

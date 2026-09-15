@@ -27,7 +27,7 @@ describe("get_my_grades", () => {
     const result = parse(await call({ courseId: 7 }));
 
     expect(result.courseId).toBe(7);
-    expect(result.grades).toEqual([
+    expect(result.grades).toMatchObject([
       {
         name: "Quiz 1",
         displayGrade: "90 %",

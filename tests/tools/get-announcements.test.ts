@@ -29,7 +29,7 @@ describe("get_announcements", () => {
     const result = parse(await call({ courseId: 9, count: 2 }));
 
     expect(result.map((a: { id: number }) => a.id)).toEqual([2, 3]);
-    expect(result[0]).toEqual({
+    expect(result[0]).toMatchObject({
       id: 2,
       title: "News 2",
       body: "Body 2",

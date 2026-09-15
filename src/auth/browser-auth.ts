@@ -8,6 +8,7 @@ import { chromium } from "playwright";
 import type { BrowserContext, Page, Request } from "playwright";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import { accessSync, readFileSync } from "node:fs";
 import * as os from "node:os";
 import type { AppConfig, TokenData } from "../types/index.js";
 import { BrowserAuthError } from "../utils/errors.js";
@@ -31,9 +32,11 @@ const QUARANTINE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export class BrowserAuth {
   private config: AppConfig;
   private ssoFlow: SSOFlow;
+  private headless: boolean;
 
   constructor(config: AppConfig) {
     this.config = config;
+    this.headless = config.headless;
     const credentials = {
       username: config.username,
       password: config.password,
@@ -55,20 +58,20 @@ export class BrowserAuth {
   private static isWSLOrDocker(): boolean {
     try {
       // WSL: /proc/version contains "microsoft" or "WSL"
-      const procVersion = require("node:fs").readFileSync("/proc/version", "utf-8");
+      const procVersion = readFileSync("/proc/version", "utf-8");
       if (/microsoft|wsl/i.test(procVersion)) return true;
     } catch {
       // Not Linux or /proc not available
     }
     try {
       // Docker: /.dockerenv exists or /proc/1/cgroup contains "docker"
-      require("node:fs").accessSync("/.dockerenv");
+      accessSync("/.dockerenv");
       return true;
     } catch {
       // Not Docker
     }
     try {
-      const cgroup = require("node:fs").readFileSync("/proc/1/cgroup", "utf-8");
+      const cgroup = readFileSync("/proc/1/cgroup", "utf-8");
       if (cgroup.includes("docker") || cgroup.includes("containerd")) return true;
     } catch {
       // Not in a container
@@ -213,7 +216,12 @@ export class BrowserAuth {
       const browserDataDir = path.join(this.config.sessionDir, "browser-data");
 
       // Force headed mode when no credentials — user must interact with the browser
-      const headless = this.ssoFlow.hasCredentials() ? this.config.headless : false;
+      const noDisplay = process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY;
+      const headless = this.ssoFlow.hasCredentials() ? this.config.headless || noDisplay : false;
+      this.headless = headless;
+      if (headless && !this.config.headless) {
+        log("INFO", "No display detected — using headless automatic login with stored credentials");
+      }
       if (!this.ssoFlow.hasCredentials() && this.config.headless) {
         log("INFO", "Overriding headless mode — browser must be visible for manual login");
       }
@@ -554,7 +562,7 @@ export class BrowserAuth {
         loginSuccess = await this.ssoFlow.login(page);
 
         if (!loginSuccess) {
-          if (this.config.headless) {
+          if (this.headless) {
             throw new BrowserAuthError(
               "Automated SSO login failed and the browser is headless, so manual login is impossible. Re-run with D2L_HEADLESS=false to log in by hand.",
               "sso_login"

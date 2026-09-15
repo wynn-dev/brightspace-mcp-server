@@ -7,6 +7,7 @@
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { ZodError } from "zod";
 import { ApiError, RateLimitError, NetworkError } from "../api/index.js";
+import { ContentReadError } from "../utils/content-reader.js";
 import { log } from "../utils/logger.js";
 
 /**
@@ -46,6 +47,8 @@ export function errorResponse(message: string): CallToolResult {
 export function sanitizeError(error: unknown): CallToolResult {
   // Log full error to stderr for debugging (token redaction handled by logger)
   log("ERROR", "Tool error", error);
+
+  if (error instanceof ContentReadError) return errorResponse(error.message);
 
   // Map to user-friendly messages
   if (error instanceof ApiError) {

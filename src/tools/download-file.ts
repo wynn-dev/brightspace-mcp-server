@@ -9,6 +9,8 @@ import type { D2LApiClient } from "../api/index.js";
 import { DownloadFileSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { toolResponse, errorResponse } from "./tool-helpers.js";
+import { getSubmissionHistory } from "../services/assignments.js";
+import { readContentBytes } from "../utils/content-reader.js";
 import { log } from "../utils/logger.js";
 import { isErrnoException } from "../utils/errors.js";
 import { validateContentId, MAX_FILE_SIZE } from "../utils/file-validator.js";
@@ -132,13 +134,16 @@ async function downloadContentFile(
 
   // Check Content-Length BEFORE downloading body (prevent memory exhaustion)
   const contentLength = parseInt(response.headers.get("Content-Length") ?? "0", 10);
-  if (contentLength > MAX_FILE_SIZE) return tooLarge(contentLength);
+  if (contentLength > MAX_FILE_SIZE) {
+    await response.body?.cancel();
+    return tooLarge(contentLength);
+  }
 
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const originalFilename = parseContentDispositionFilename(disposition) ?? "download";
   log("DEBUG", `Content-Disposition filename: ${originalFilename}`);
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await readContentBytes(response);
   if (buffer.length > MAX_FILE_SIZE) return tooLarge(buffer.length);
 
   const result = await saveAndRespond(downloadPath, customFilename || originalFilename, buffer, "File");
@@ -158,38 +163,22 @@ async function downloadSubmissionFile(
 ): Promise<CallToolResult> {
   log("INFO", `Downloading submission file: courseId=${courseId}, folderId=${folderId}, fileId=${fileId}`);
 
-  interface DropboxSubmission {
-    Id: number;
-    Files: Array<{ FileId: number; FileName: string; Size: number }>;
-  }
-
-  // Look the file up in the user's submission to learn its name and size
-  const submissions = await apiClient.get<DropboxSubmission[]>(
-    apiClient.le(courseId, `/dropbox/folders/${folderId}/submissions/mysubmissions/`)
-  );
-
-  if (!submissions || submissions.length === 0) {
-    return errorResponse("No submissions found for this assignment. Upload a submission first.");
-  }
-
-  const submission = submissions[0];
-  const file = submission.Files.find((f) => f.FileId === fileId);
-  if (!file) {
-    return errorResponse(
-      `File ID ${fileId} not found in submission. Available files: ${submission.Files.map((f) => `${f.FileName} (ID: ${f.FileId})`).join(", ")}`
-    );
-  }
-  if (file.Size > MAX_FILE_SIZE) return tooLarge(file.Size);
+  const result = await getSubmissionHistory(apiClient, courseId, folderId);
+  if (result.status !== "available") return errorResponse(`Submission history is ${result.status}; cannot resolve file.`);
+  const submission = result.history.find(s => s.files.some(f => f.fileId === fileId));
+  const file = submission?.files.find(f => f.fileId === fileId);
+  if (!submission?.id || !file?.name) return errorResponse(`File ID ${fileId} not found in your submission history.`);
+  if (file.size !== null && file.size > MAX_FILE_SIZE) return tooLarge(file.size);
 
   const response = await apiClient.getRaw(
-    apiClient.le(courseId, `/dropbox/folders/${folderId}/submissions/${submission.Id}/files/${fileId}/download`)
+    apiClient.le(courseId, `/dropbox/folders/${folderId}/submissions/${submission.id}/files/${fileId}/download`)
   );
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await readContentBytes(response);
   if (buffer.length > MAX_FILE_SIZE) return tooLarge(buffer.length);
 
-  const result = await saveAndRespond(downloadPath, customFilename || file.FileName, buffer, "Submission file");
-  return withOriginalFilename(result, file.FileName);
+  const saved = await saveAndRespond(downloadPath, customFilename || file.name, buffer, "Submission file");
+  return withOriginalFilename(saved, file.name);
 }
 
 /** The response reports the Brightspace filename even when customFilename was used. */

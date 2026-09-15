@@ -69,7 +69,9 @@ describe("download_file", () => {
     const apiClient = fakeApiClient(
       {
         "/folders/5/submissions/mysubmissions/": [
-          { Id: 99, Files: [{ FileId: 7, FileName: "hw1.pdf", Size: 4 }] },
+          { Entity: { EntityId: 1, EntityType: "User" }, Submissions: [
+            { Id: 100, SubmissionDate: "2026-09-03T00:00:00Z", Files: [{ FileId: 8, FileName: "new.pdf", Size: 4 }] },
+            { Id: 99, SubmissionDate: "2026-09-01T00:00:00Z", Files: [{ FileId: 7, FileName: "hw1.pdf", Size: 4 }] }] },
         ],
       },
       { getRaw: async () => fakeResponse("data") }

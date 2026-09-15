@@ -14,7 +14,8 @@ export { registerGetCourseContent } from "./get-course-content.js";
 export { registerDownloadFile } from "./download-file.js";
 export { registerGetClasslistEmails } from "./get-classlist-emails.js";
 export { registerGetRoster } from "./get-roster.js";
-export { registerGetSyllabus } from "./get-syllabus.js";
+export { registerGetSyllabus, registerReadOnlyGetSyllabus } from "./get-syllabus.js";
+export { registerReadCourseContent } from "./read-course-content.js";
 export { registerGetDiscussions } from "./get-discussions.js";
 
 // Re-export shared helpers and schemas for convenience
@@ -23,3 +24,12 @@ export { defineTool } from "./define-tool.js";
 export type { RegisterTool, ToolContext } from "./define-tool.js";
 export { fetchEnrolledCourses, settleAcrossCourses } from "./course-helpers.js";
 export * from "./schemas.js";
+
+export { registerGetCalendar } from "./get-calendar.js";
+export { registerGetSubmissionHistory } from "./get-submission-history.js";
+export { registerGetMyWork } from "./get-my-work.js";
+export { registerGetCourseUpdates } from "./get-course-updates.js";
+export { registerGetMyGroups } from "./get-my-groups.js";
+export { registerGetChecklists } from "./get-checklists.js";
+export { registerGetGradeSummary } from "./get-grade-summary.js";
+export { registerSearchCourse } from "./search-course.js";

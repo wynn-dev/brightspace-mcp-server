@@ -121,10 +121,5 @@ export function objectPage<T>(objects: T[], next?: string) {
 /** Minimal fetch Response stand-in for getRaw fakes. */
 export function fakeResponse(body: Buffer | string, headers: Record<string, string> = {}, ok = true) {
   const buffer = typeof body === "string" ? Buffer.from(body) : body;
-  return {
-    ok,
-    status: ok ? 200 : 500,
-    headers: new Headers(headers),
-    arrayBuffer: async () => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
-  };
+  return new Response(new Uint8Array(buffer), { status: ok ? 200 : 500, headers });
 }

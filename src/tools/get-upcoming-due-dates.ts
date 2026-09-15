@@ -9,6 +9,7 @@ import { GetUpcomingDueDatesSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { fetchEnrolledCourses } from "./course-helpers.js";
 import { toolResponse } from "./tool-helpers.js";
+import { recordLimit } from "../utils/read-status.js";
 import { log } from "../utils/logger.js";
 
 interface EventDataInfo {
@@ -19,6 +20,7 @@ interface EventDataInfo {
   StartDateTime: string;
   EndDateTime: string;
   IsAllDayEvent: boolean;
+  EventType: number;
 }
 
 export const registerGetUpcomingDueDates = defineTool(
@@ -26,7 +28,7 @@ export const registerGetUpcomingDueDates = defineTool(
     name: "get_upcoming_due_dates",
     title: "Get Upcoming Due Dates",
     description:
-      "Fetch upcoming due dates across all your courses. Shows assignments, quizzes, and other items due within the specified time window. Use this when the user asks about deadlines, what's due, upcoming work, or what they need to do this week.",
+      "Fetch calendar events explicitly classified as due dates. Calendar coverage may omit work; use get_my_work for assignment, quiz and content deadlines, or get_calendar for reminders and availability. Use this when the user asks about deadlines, what's due, upcoming work, or what they need to do this week.",
     schema: GetUpcomingDueDatesSchema,
   },
   async ({ daysAhead, courseId }, { apiClient, config }) => {
@@ -40,10 +42,12 @@ export const registerGetUpcomingDueDates = defineTool(
       ? String(courseId)
       : (await fetchEnrolledCourses(apiClient, config)).map((c) => c.id).join(",");
 
+    if (!orgUnitIds) return toolResponse([]);
+
     log("DEBUG", `get_upcoming_due_dates: querying orgUnitIds=${orgUnitIds}, window=${startDateTime} to ${endDateTime}`);
 
     const path = apiClient.leGlobal(
-      `/calendar/events/myEvents/?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&orgUnitIdsCSV=${orgUnitIds}`
+      `/calendar/events/myEvents/?startDateTime=${encodeURIComponent(startDateTime)}&endDateTime=${encodeURIComponent(endDateTime)}&orgUnitIdsCSV=${orgUnitIds}&eventType=6`
     );
 
     const events = await getAllObjectListPages<EventDataInfo>(apiClient, path, {
@@ -51,8 +55,12 @@ export const registerGetUpcomingDueDates = defineTool(
       label: "myEvents",
     });
 
+    if (events.some(event => typeof event.EventType !== "number"))
+      recordLimit("Calendar event types unavailable; due-date classification requires LE 1.94 or newer. Use get_my_work.");
+
     // Soonest due first
     const mappedEvents = events
+      .filter(event => event.EventType === 6)
       .map((event) => ({
         id: event.CalendarEventId,
         title: event.Title,

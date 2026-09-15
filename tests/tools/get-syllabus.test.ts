@@ -1,13 +1,66 @@
 import { describe, it, expect, vi } from "vitest";
-import { registerGetSyllabus } from "../../src/tools/get-syllabus.js";
+import { registerGetSyllabus, registerReadOnlyGetSyllabus } from "../../src/tools/get-syllabus.js";
 import { ApiError } from "../../src/api/index.js";
 import { captureTool, fakeApiClient, parse, text, fakeResponse } from "./helpers.js";
+import fs from "node:fs/promises";
+import { secureDownload } from "../../src/utils/download-helpers.js";
+
+vi.mock("../../src/utils/download-helpers.js", () => ({ secureDownload: vi.fn() }));
 
 vi.mock("../../src/utils/pdf-extractor.js", () => ({
   extractPdfText: vi.fn(async () => ({ text: "PDF TEXT", totalPages: 2 })),
 }));
 
 describe("get_syllabus", () => {
+  it("preserves plain overview text and detects PDFs without a filename extension", async () => {
+    const api = fakeApiClient({ "/8/overview": { Description: { Text: "Read <chapter 2>", Html: "" } } }, {
+      getRaw: async () => fakeResponse("%PDF-1.4", { "Content-Type": "application/pdf" }),
+    });
+    expect(parse(await captureTool(registerReadOnlyGetSyllabus, api).call({ courseId: 8 }))).toMatchObject({
+      description: { markdown: "Read <chapter 2>", html: "" }, syllabusText: "PDF TEXT",
+    });
+  });
+
+  it("does not claim that a forbidden attachment is absent", async () => {
+    const api = fakeApiClient({ "/8/overview": { Description: null } }, {
+      getRaw: async () => { throw new ApiError(403, "/attachment", "Forbidden"); },
+    });
+    expect(parse(await captureTool(registerReadOnlyGetSyllabus, api).call({ courseId: 8 })).hasAttachment).toBeNull();
+  });
+
+  it("cancels oversized attachment responses before reading the body", async () => {
+    const cancel = vi.fn();
+    const api = fakeApiClient({ "/8/overview": { Description: null } }, {
+      getRaw: async () => new Response(new ReadableStream({ cancel }), { headers: { "Content-Length": String(51 * 1024 * 1024) } }),
+    });
+    expect((await captureTool(registerReadOnlyGetSyllabus, api).call({ courseId: 8 })).isError).toBe(true);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+  it("rejects downloadPath in the read-only handler, even without SDK validation", async () => {
+    const apiClient = fakeApiClient();
+    const { call } = captureTool(registerReadOnlyGetSyllabus, apiClient);
+    expect((await call({ courseId: 8, downloadPath: "/tmp" })).isError).toBe(true);
+    expect(apiClient.get).not.toHaveBeenCalled();
+    expect(apiClient.getRaw).not.toHaveBeenCalled();
+    expect(secureDownload).not.toHaveBeenCalled();
+  });
+
+  it("preserves attachment saves for stdio", async () => {
+    const stat = vi.spyOn(fs, "stat").mockResolvedValue({ isDirectory: () => true } as any);
+    vi.mocked(secureDownload).mockResolvedValueOnce({ path: "/tmp/syllabus.pdf", size: 8, mime: "application/pdf" } as any);
+    const apiClient = fakeApiClient({ "/8/overview": { Description: null } }, {
+      getRaw: async () => fakeResponse("%PDF-1.4", { "Content-Disposition": 'attachment; filename="syllabus.pdf"' }),
+    });
+    try {
+      const result = parse(await captureTool(registerGetSyllabus, apiClient).call({ courseId: 8, downloadPath: "/tmp" }));
+      expect(result.download).toMatchObject({ success: true, filePath: "/tmp/syllabus.pdf" });
+      expect(secureDownload).toHaveBeenCalledWith({ targetDir: "/tmp", filename: "syllabus.pdf", data: Buffer.from("%PDF-1.4") });
+    } finally {
+      stat.mockRestore();
+      vi.mocked(secureDownload).mockClear();
+    }
+  });
+
   it("returns a successful 'no syllabus' payload when the overview is 404", async () => {
     const apiClient = fakeApiClient({
       "/8/overview": () => {

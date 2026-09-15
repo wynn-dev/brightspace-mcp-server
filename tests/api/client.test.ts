@@ -59,10 +59,10 @@ describe("D2LApiClient", () => {
   });
 
   describe("HTTPS enforcement", () => {
-    it("should throw error for HTTP URLs", () => {
+    it.each(["http://purdue.brightspace.com", "HTTP://purdue.brightspace.com", "ftp://purdue.brightspace.com"])("should reject non-HTTPS URLs: %s", baseUrl => {
       expect(() => {
         new D2LApiClient({
-          baseUrl: "http://purdue.brightspace.com",
+          baseUrl,
           tokenManager: mockTokenManager,
         });
       }).toThrow("HTTPS is required");
