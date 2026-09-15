@@ -6,7 +6,7 @@ export async function fetchCalendar(api: D2LApiClient, courseIds: number[], star
   const format = new Intl.DateTimeFormat("en-GB", { timeZone, dateStyle: "short", timeStyle: "short", hourCycle: "h23" });
   const local = (date: string | null) => date && Number.isFinite(Date.parse(date)) ? format.format(new Date(date)) : null;
   if (!courseIds.length) return { status: "available", events: [], recurrenceExpanded: occurrences, timeZone };
-  const query = new URLSearchParams({ orgUnitIdsCSV: courseIds.join(","), startDateTime: start, endDateTime: end });
+  const query = new URLSearchParams({ orgUnitIdsCSV: courseIds.join(","), startDateTime: new Date(start).toISOString(), endDateTime: new Date(end).toISOString() });
   let result = await readList(api, api.leGlobal(`/calendar/events/${occurrences ? "myEventsWithOccurrences" : "myEvents"}/?${query}`), 1000);
   let recurrenceExpanded = occurrences;
   if (occurrences && result.status === "not_found") {

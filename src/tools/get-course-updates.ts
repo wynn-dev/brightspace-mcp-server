@@ -6,8 +6,9 @@ import { recordLimit } from "../utils/read-status.js";
 import { toolResponse, errorResponse } from "./tool-helpers.js";
 export const registerGetCourseUpdates = defineTool({ name: "get_course_updates", title: "Get Course Updates",
   description: "Read course update counts, the user's recent feed, and announcements created or edited since a timestamp. Includes pinned news. This is an on-demand view, not an exhaustive changelog or outbound notification service.", schema: UpdatesSchema },
-async ({ courseId, since, until: untilArg, offset, limit }, { apiClient, config }) => {
-  const until = untilArg ?? new Date().toISOString();
+async ({ courseId, since: sinceArg, until: untilArg, offset, limit }, { apiClient, config }) => {
+  const since = new Date(sinceArg).toISOString();
+  const until = untilArg ? new Date(untilArg).toISOString() : new Date().toISOString();
   if (Date.parse(until) <= Date.parse(since)) return errorResponse("until must be later than since");
   const courses = courseId ? [{ id: courseId }] : await fetchEnrolledCourses(apiClient, config);
   const ids = courses.map(c => c.id), counts: Row[] = [], sources = [];

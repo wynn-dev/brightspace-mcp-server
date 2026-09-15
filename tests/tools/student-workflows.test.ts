@@ -20,6 +20,9 @@ describe("calendar and work overview", () => {
       { RecurrenceId: "r2", IsAllDayEvent: true, StartDay: "2026-09-18", EndDay: "2026-09-19" },
     ] }]) });
     const r = parse(await captureTool(registerGetCalendar, api).call({ courseId: 5, start: "2026-09-01T00:00:00Z", end: "2026-09-30T00:00:00Z", timeZone: "Europe/Berlin" }));
+    const sent = new URL(api.requested[0], "https://example.edu").searchParams;
+    expect(sent.get("startDateTime")).toBe("2026-09-01T00:00:00.000Z");
+    expect(sent.get("endDateTime")).toBe("2026-09-30T00:00:00.000Z");
     expect(r.recurrenceExpanded).toBe(true); expect(r.items).toHaveLength(2);
     expect(r.items.find((e: any) => e.recurrenceId === "r1")).toMatchObject({ kind: "availability_start", localStart: "17/09/2026, 11:00", location: "Room 2" });
     expect(r.items.find((e: any) => e.recurrenceId === "r2")).toMatchObject({ endDayExclusive: "2026-09-19", startDate: null, localStart: null });
@@ -77,6 +80,8 @@ describe("groups, checklists and updates", () => {
     ], "/5/news/": [{ Id: 1, Title: "Edited", CreatedDate: "2026-08-01T00:00:00Z", LastModifiedDate: "2026-09-14T00:00:00Z", IsPinned: true }] });
     const r = parse(await captureTool(registerGetCourseUpdates, api).call({ courseId: 5, since: "2026-09-13T00:00:00Z", until: "2026-09-15T00:00:00Z" }));
     expect(r.items).toHaveLength(3); expect(r.items.find((i: any) => i.source === "news").isPinned).toBe(true);
+    const feedQuery = new URL(api.requested.find(p => p.includes("/feed/"))!, "https://example.edu").searchParams;
+    expect(feedQuery.get("since")).toBe("2026-09-13T00:00:00.000Z");
     expect(r.counts[0].UnreadDiscussionPosts).toBe(-1); expect(JSON.stringify(r.items)).not.toContain("other");
   });
 });

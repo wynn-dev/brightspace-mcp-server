@@ -162,7 +162,7 @@ New service reads use a 60-second in-memory cache and normally cap each source a
 | `pnpm test` | Run the test suite |
 | `pnpm run playwright:deps` | Install Chromium system libraries (Linux) |
 
-Sessions re-authenticate automatically. If that fails (missed Duo push, expired cookies), run `pnpm run auth`.
+When a Brightspace request finds an expired session, it re-authenticates automatically and retries. Concurrent requests wait for the same login attempt. This uses the configured school login flow and stored credentials; required MFA or manual browser steps still need interaction. Run `pnpm run auth` only if automatic login fails. Authentication may refresh local session files; the read-only tools do not modify coursework or save course documents over HTTP.
 
 ## Configuration
 

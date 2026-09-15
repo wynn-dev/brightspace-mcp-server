@@ -83,7 +83,7 @@ async function main(): Promise<void> {
       }),
   });
 
-  log("INFO", `Brightspace MCP Server listening on ${running.url} (12 read-only tools)`);
+  log("INFO", `Brightspace MCP Server listening on ${running.url} (20 read-only tools)`);
   if (authToken) {
     log("INFO", "Bearer auth enabled — clients must send Authorization: Bearer <MCP_AUTH_TOKEN>");
   } else if (isLoopbackHost(host)) {
