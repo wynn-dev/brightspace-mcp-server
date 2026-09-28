@@ -35,7 +35,7 @@ describe("personal deadlines", () => {
   const routes = { "/users/whoami": { Identifier: "42" }, "/dropbox/folders/": folders, "/quizzes/": [], "/mysubmissions/": [] };
   it("uses verified extensions and preserves an explicitly removed end date", async () => {
     const api = fakeApiClient({ ...routes, "/specialaccess/42": { StartDate: null, EndDate: null, DueDate: "2026-09-20T00:00:00Z" } });
-    const result = parse(await captureTool(registerGetAssignments, api).call({ courseId: 5 })).assignments[0];
+    const result = parse(await captureTool(registerGetAssignments, api).call({ courseId: 5, detail: true })).assignments[0];
     expect(result).toMatchObject({ dueDate: "2026-09-20T00:00:00Z", endDate: null, personalDatesVerified: true,
       courseDefaultDates: { dueDate: "2026-09-10T00:00:00Z" } });
     expect(api.requested.filter(p => p.includes("specialaccess"))).toEqual(["/d2l/api/le/1.0/5/dropbox/folders/1/specialaccess/42"]);

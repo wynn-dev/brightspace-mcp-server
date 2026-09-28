@@ -51,6 +51,8 @@ export const GetAssignmentsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
   courseId: z.coerce.number().int().positive().optional()
     .describe("Course ID to get assignments for. If omitted, returns assignments for all enrolled courses."),
+  detail: z.boolean().optional()
+    .describe("Include instructions, rubrics, attachments, submission history and all feedback. Defaults to true with folderId, otherwise false (summary rows)."),
 });
 
 export const GetCourseContentSchema = z.object({
@@ -62,6 +64,8 @@ export const GetCourseContentSchema = z.object({
     .describe("Case-insensitive substring match on module titles. Only returns modules whose title contains this string (e.g. 'Labs', 'Staff', 'Homeworks'). Children of matching modules are included in full."),
   maxDepth: z.coerce.number().int().min(1).max(10).optional()
     .describe("Limit recursive depth of the content tree. Depth 1 returns top-level modules with direct children only. Useful for getting a table of contents without all nested content."),
+  includeDescriptions: z.boolean().default(false)
+    .describe("Return full module/topic descriptions as Markdown instead of short snippets."),
 });
 
 export const GetClasslistEmailsSchema = z.object({

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { D2LApiClient } from "../../src/api/client.js";
+import { withReadStatus } from "../../src/utils/read-status.js";
 import { ApiError, RateLimitError, NetworkError } from "../../src/api/errors.js";
 import type { TokenManager } from "../../src/auth/token-manager.js";
 import type { TokenData } from "../../src/types/index.js";
@@ -249,6 +250,13 @@ describe("D2LApiClient", () => {
 
       expect(result2).toEqual(responseData);
       expect(mockFetch).toHaveBeenCalledTimes(2); // No new fetch
+
+      // Cache hits do not consume the per-call network read budget.
+      const status = await withReadStatus(async () => {
+        for (let i = 0; i < 250; i++) await client.get(path, { ttl: 60000 });
+        return { content: [], structuredContent: {} };
+      });
+      expect(status.structuredContent?.readStatus).toMatchObject({ partial: false, limits: [] });
     });
 
     it("should not cache when ttl not specified", async () => {

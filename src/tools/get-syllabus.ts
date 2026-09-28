@@ -73,9 +73,10 @@ const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
       throw error;
     }
 
+    // Markdown only: the raw HTML doubled the size without adding information.
     const description = overview?.Description?.Html
-      ? convertHtmlToMarkdown(overview.Description.Html)
-      : overview?.Description?.Text ? { markdown: overview.Description.Text, html: "" } : null;
+      ? convertHtmlToMarkdown(overview.Description.Html).markdown || null
+      : overview?.Description?.Text || null;
 
     // Always attempt to fetch the attachment so we can extract PDF text
     let attachmentBuffer: Buffer | null = null;
@@ -142,7 +143,7 @@ const getSyllabus: ToolBody<typeof GetSyllabusSchema> =
       result.hasAttachment = hasAttachment;
     }
     if (download) result.download = download;
-    if (includeContentFallback && !description?.markdown && !syllabusText) {
+    if (includeContentFallback && !description && !syllabusText) {
       result.contentFallback = await courseMaterialFallback(apiClient, courseId, config.baseUrl, "syllabus");
     }
 

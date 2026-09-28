@@ -6,7 +6,8 @@ export const zone = z.string().max(100).default("UTC").refine(v => { try { new I
 export const CalendarSchema = z.object({ courseId: courseId.optional(), start: instant, end: instant, timeZone: zone, occurrences: z.boolean().default(true), ...paging })
   .refine(v => Date.parse(v.end) > Date.parse(v.start) && Date.parse(v.end) - Date.parse(v.start) <= 366 * 86400000, "Calendar window must be positive and at most 366 days");
 export const WorkSchema = z.object({ courseId: courseId.optional(), daysAhead: z.coerce.number().int().min(1).max(90).default(14),
-  daysBehind: z.coerce.number().int().min(0).max(90).default(14), includeCompleted: z.boolean().default(false), includeUndated: z.boolean().default(true), ...paging });
+  daysBehind: z.coerce.number().int().min(0).max(90).default(14), includeCompleted: z.boolean().default(false), includeUndated: z.boolean().default(false),
+  includeCalendarContext: z.boolean().default(false), ...paging });
 export const SubmissionSchema = z.object({ courseId, folderId: courseId, ...paging });
 export const UpdatesSchema = z.object({ courseId: courseId.optional(), since: instant, until: instant.optional(), ...paging });
 export const GroupsSchema = z.object({ courseId, ...paging });

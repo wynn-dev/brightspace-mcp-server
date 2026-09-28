@@ -17,7 +17,7 @@ describe("get_syllabus", () => {
       getRaw: async () => fakeResponse("%PDF-1.4", { "Content-Type": "application/pdf" }),
     });
     expect(parse(await captureTool(registerReadOnlyGetSyllabus, api).call({ courseId: 8 }))).toMatchObject({
-      description: { markdown: "Read <chapter 2>", html: "" }, syllabusText: "PDF TEXT",
+      description: "Read <chapter 2>", syllabusText: "PDF TEXT",
     });
   });
 
@@ -104,7 +104,7 @@ describe("get_syllabus", () => {
     const result = parse(await call({ courseId: 8 }));
 
     expect(result.courseId).toBe(8);
-    expect(result.description.markdown).toContain("Welcome");
+    expect(result.description).toContain("Welcome");
     expect(result.syllabusText).toBe("PDF TEXT");
     expect(result.totalPages).toBe(2);
     expect(result.hasAttachment).toBeUndefined();

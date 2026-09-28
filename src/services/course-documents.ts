@@ -14,7 +14,9 @@ export async function courseTopics(api: D2LApiClient, courseId: number, baseUrl:
       if (++scanned > 2000) { recordLimit("Document discovery capped at 2000 nodes"); return; }
       if (node.IsHidden === true || node.IsLocked === true) continue;
       const title = str(node.Title) ?? "", topicId = id(node.TopicId);
-      if (topicId && (node.TopicType === undefined || node.TopicType === 1) && !seen.has(topicId)) {
+      // Real TOC topics name their kind (TypeIdentifier); structure rows carry the numeric TopicType.
+      const isFile = typeof node.TypeIdentifier === "string" ? node.TypeIdentifier === "File" : node.TopicType === undefined || node.TopicType === 1;
+      if (topicId && isFile && !seen.has(topicId)) {
         seen.add(topicId);
         topics.push({ courseId, topicId, title, description: richText(node.Description), modulePath: parents.join(" / "),
           sourceUrl: new URL(`/d2l/le/content/${courseId}/viewContent/${topicId}/View`, baseUrl).href });
