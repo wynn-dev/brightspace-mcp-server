@@ -10,6 +10,7 @@ import { defineTool } from "./define-tool.js";
 import { fetchEnrolledCourses, settleAcrossCourses } from "./course-helpers.js";
 import { toolResponse } from "./tool-helpers.js";
 import { log } from "../utils/logger.js";
+import { fileRefs } from "../services/data.js";
 
 interface NewsItem {
   Id: number;
@@ -37,7 +38,7 @@ function mapNewsItem(item: NewsItem) {
     createdDate: item.CreatedDate,
     lastModifiedDate: item.LastModifiedDate ?? item.CreatedDate,
     endDate: item.EndDate ?? null,
-    attachments: item.Attachments ?? [],
+    attachments: fileRefs(item.Attachments),
     startDate: item.StartDate,
     isPinned: item.IsPinned,
   };
@@ -61,7 +62,7 @@ export const registerGetAnnouncements = defineTool(
     name: "get_announcements",
     title: "Get Announcements",
     description:
-      "Fetch recent announcements from your courses. Can filter to a specific course or get announcements across all courses. Use this when the user asks about announcements, news, updates from instructors, recent posts, or what professors said.",
+      "Fetch recent announcements from your courses. Can filter to a specific course or get announcements across all courses. Use this when the user asks about announcements, news, updates from instructors, recent posts, or what professors said. Attached files are listed as { fileId, name, size }; read them with read_course_content (attachment: { kind: \"announcement\", newsItemId: <announcement id>, fileId }).",
     schema: GetAnnouncementsSchema,
   },
   async ({ courseId, count }, { apiClient, config }) => {

@@ -78,7 +78,7 @@ Expect **20 tools over stdio and 19 over HTTP**. If tools are missing or the run
 
 ## Reading course materials
 
-The `read_course_content` tool reads uploaded **PDF, HTML, and plain-text files** over both HTTP and stdio. Files are fetched with your Brightspace session and processed in memory. It returns extracted text — and, for PDFs, an image of each page — not the original file, and does not update coursework or completion status.
+The `read_course_content` tool reads uploaded **PDF, HTML, and plain-text files** over both HTTP and stdio: course content topics, plus assignment brief, instructor feedback and announcement attachments (see [Reading attachments](#reading-attachments)). Files are fetched with your Brightspace session and processed in memory. It returns extracted text — and, for PDFs, an image of each page — not the original file, and does not update coursework or completion status.
 
 1. Call `get_course_content` with a `courseId` (and optionally `moduleTitle` or `typeFilter: "file"`) to find a file's `topicId`. Topic descriptions in the tree are separate from uploaded file bodies; HTML pages can also appear as file topics.
 2. Call `read_course_content` with those IDs. For example, to read physical PDF pages 2–4:
@@ -87,7 +87,23 @@ The `read_course_content` tool reads uploaded **PDF, HTML, and plain-text files*
    { "courseId": 12345, "topicId": 67890, "startPage": 2, "endPage": 4 }
    ```
 
-3. If the response contains a non-null `nextCursor`, call again with the same IDs and that cursor, omitting `startPage` and `endPage`. Continue until `nextCursor` is null. The cursor preserves the selected range and rejects continuation if the file changes.
+3. If the response contains a non-null `nextCursor`, call again with the same IDs and that cursor, omitting `startPage` and `endPage`. Continue until `nextCursor` is null. The cursor preserves the selected range, is bound to the selected file, and rejects continuation if the file changes.
+
+### Reading attachments
+
+Files that are not content topics are read with the same tool by passing `attachment` instead of `topicId` (exactly one of the two). Decoding, page images, limits and cursors work the same way.
+
+| `attachment.kind` | Where the IDs come from | Required fields |
+|---|---|---|
+| `assignment` | Assignment brief files: `attachments[].fileId` in `get_assignments` with `detail` (or `folderId`); `folderId` is the assignment `id` | `folderId`, `fileId` |
+| `feedback` | Instructor feedback files on your own submission: `feedback[].files[].fileId` in `get_submission_history` (or `allFeedback` in `get_assignments` detail) | `folderId`, `fileId` (optional `entityType`/`entityId` to disambiguate) |
+| `announcement` | Announcement files: `attachments[].fileId` in `get_announcements`; `newsItemId` is the announcement `id` | `newsItemId`, `fileId` |
+
+```json
+{ "courseId": 12345, "attachment": { "kind": "assignment", "folderId": 678, "fileId": 910 } }
+```
+
+Each call rechecks that the file is still listed on the assignment or announcement before fetching it; hidden assignments are refused. Feedback files are resolved only from your own released feedback (your user or group entry in your submissions); other users' or groups' feedback is never requested. Responses carry `attachment` (with the resolved `entityType`/`entityId` for feedback) instead of `topicId`, and `sourceUrl` points at the assignment or announcement page. Image, Office and other attachments outside PDF, HTML and plain text are reported as unsupported.
 
 Responses include the document title, filename, content type, and a Brightspace `sourceUrl`. PDF `pages` entries contain physical **1-based** page numbers, text, and offsets within each page; these page numbers may differ from printed labels. HTML returns Markdown and plain-text files return decoded text, both with a text offset. Offsets and text budgets count JavaScript UTF-16 code units; continuation preserves Unicode characters. PDF pages can span multiple responses, and an empty page is reported explicitly.
 
@@ -107,7 +123,7 @@ Every course-scoped tool accepts `course` — a course name or code such as `"Re
 |---|---|
 | `get_briefing` | One-call catch-up: work due in the next `daysAhead` days (default 7), overdue work from the last 14 days, announcements and grades released since `since` (default 7 days ago), and per-course unread discussion/feedback and unattempted-quiz counts. Each section returns `total` and the first `limit` items (default 10). |
 | `get_my_work` | Assignments, quizzes, scheduled content and calendar deadlines, including overdue work. Useful for a weekly briefing. Undated assignments and quizzes are counted in `undatedExcluded`; `includeUndated: true` lists them together with undated scheduled content; `includeCalendarContext: true` adds non-deadline calendar events. Completion, exemptions and unavailable sources stay explicit. |
-| `get_submission_history` | All available individual/group submissions for a `folderId`, newest first, plus released feedback, rubric assessments and attachment/link references. |
+| `get_submission_history` | All available individual/group submissions for a `folderId`, newest first, plus released feedback, rubric assessments and attachment/link references. Feedback files can be read with `read_course_content` (`attachment.kind: "feedback"`). |
 | `get_course_updates` | Batch update counts, user feed and news created or edited since `since` (default: 7 days ago); includes pinned announcements. This is an on-demand view, not a complete change log. |
 | `get_grade_summary` | Visible grades, grading setup, categories, item rules and official final grade; optional in-memory what-if `scenarios`. |
 | `search_course` | Case-insensitive keyword matches in announcement bodies, assignment instructions, module/topic titles and descriptions, and course descriptions. Discussions (`sources: [..., "discussions"]`) are opt-in because they need many reads. Opt into `sources: ["documents"]` for bounded PDF/HTML/text body search with PDF page references. |
@@ -118,7 +134,7 @@ Every course-scoped tool accepts `course` — a course name or code such as `"Re
 Existing tools also have more focused options:
 
 - `get_my_courses`: `query` searches names/codes; `includeDetails`, `semester` and `onDate` read course dates and semester metadata; `sort: "recent"` orders by last access. An active enrollment is not proof of the current semester. If course details are denied, dates can fall back to enrollment access metadata and semester filters can use an explicitly typed semester/term ancestor. Each field identifies its source; names/codes alone are not used to infer a term. Courses with unavailable filter metadata are retained with a null match flag.
-- `get_assignments`: returns summary rows (dates, state, submission count, score, quiz attempts) by default; `detail: true` adds instructions, rubrics, attachments, submission history and all feedback. `folderId` selects one assignment (requires `courseId`) and defaults to detail; submission history comes from Brightspace's entity/group response. Quiz attempts are restricted to the authenticated user and only published scores are returned. Own-user special-access routes are checked for personal dates and quiz settings; explicit null dates remove restrictions. Denied, missing or malformed responses leave personal dates unverified. `attemptsRemaining` stays null because a reliable remaining-attempt count requires more than an override. `attemptsRemainingAssumingDefault` is explicitly conditional.
+- `get_assignments`: returns summary rows (dates, state, submission count, score, quiz attempts) by default; `detail: true` adds instructions, rubrics, attachments, submission history and all feedback. Brief attachments (`attachments[].fileId`) and feedback files can be read with `read_course_content`. `folderId` selects one assignment (requires `courseId`) and defaults to detail; submission history comes from Brightspace's entity/group response. Quiz attempts are restricted to the authenticated user and only published scores are returned. Own-user special-access routes are checked for personal dates and quiz settings; explicit null dates remove restrictions. Denied, missing or malformed responses leave personal dates unverified. `attemptsRemaining` stays null because a reliable remaining-attempt count requires more than an override. `attemptsRemainingAssumingDefault` is explicitly conditional.
 - `get_syllabus` and `get_roster`: if their primary source is unavailable, `includeContentFallback` (default true) finds up to three accessible course-guide or staff/contact documents. Excerpts are separate candidates with source links and PDF page references; they do not establish an official syllabus or staff membership. Set the option to false to skip those reads.
 - `get_discussions`: supply `forumId` and `topicId`, then optionally `threadId`, `unreadOnly`, `ownOnly` (posts authored by you), `since`, `threadsOnly`, `sort`, `pageNumber` and `pageSize`. Forum-only calls list topics; request a topic to read posts. Forum/topic lists also use `pageNumber` and `pageSize`; follow `nextPage`, or select a forum and follow its `nextTopicPage`.
 - `get_my_grades`: each course includes its released `finalGrade` (`{ displayGrade, points, maxPoints }`) or null with `finalGradeStatus` (e.g. `not_found` before release), next to the grade items. Use `get_grade_summary` for grading rules and what-if projections.

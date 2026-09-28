@@ -25,7 +25,7 @@ function summarize(a: Assignment) {
 
 export const registerGetAssignments = defineTool({
   name: "get_assignments", title: "Get Assignments",
-  description: "Read assignments and quizzes with dates, submission state and scores; use detail (or folderId for one assignment) for instructions, rubrics, submission history and published feedback. Checks own-user special access for dates/settings; denied or missing overrides remain unverified course defaults. An ongoing own-user quiz attempt can supply its current deadline. Failed reads remain unknown. Paginated per course.",
+  description: "Read assignments and quizzes with dates, submission state and scores; use detail (or folderId for one assignment) for instructions, rubrics, submission history and published feedback. Checks own-user special access for dates/settings; denied or missing overrides remain unverified course defaults. An ongoing own-user quiz attempt can supply its current deadline. Failed reads remain unknown. Paginated per course. Read brief attachments with read_course_content (attachment: { kind: \"assignment\", folderId: <assignment id>, fileId }) and feedback files with kind \"feedback\".",
   schema: GetAssignmentsSchema,
 }, async ({ courseId, folderId, offset, limit, detail = folderId !== undefined }, { apiClient, config }) => {
   if (folderId && !courseId) return errorResponse("folderId requires courseId");

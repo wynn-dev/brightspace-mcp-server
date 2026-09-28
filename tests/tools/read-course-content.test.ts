@@ -105,7 +105,7 @@ describe("read_course_content", () => {
     const { call, api } = reader("first document", "text/plain", "notes.txt");
     const first = parse(await call({ courseId: 3, topicId: 10, maxChars: 3 }));
     const wrong = await call({ courseId: 4, topicId: 10, cursor: first.nextCursor });
-    expect(text(wrong)).toMatch(/different course or topic/);
+    expect(text(wrong)).toMatch(/different course or file/);
     expect(api.get).toHaveBeenCalledTimes(1);
     api.getRaw.mockResolvedValueOnce(new Response("changed document", { headers: { "Content-Type": "text/plain" } }));
     expect(text(await call({ courseId: 3, topicId: 10, cursor: first.nextCursor }))).toMatch(/document changed/);
