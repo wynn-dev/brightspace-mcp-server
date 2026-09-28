@@ -43,6 +43,7 @@ export function studentCourseFixture() {
     IsHidden: false, CanExceedMaxPoints: false, ExcludeFromFinalGradeCalculation: false }]);
   le("/5/grades/categories/", []); le("/5/grades/setup/", { GradingSystem: "Points", IsNullGradeZero: false });
   le("/5/grades/exemptions/42", { Items: [{ GradeObjectId: 1, IsExempt: false, GradeValue: { PointsNumerator: 999 } }] });
+  le("/5/grades/1/statistics", { OrgUnitId: 5, GradeObjectId: 1, Minimum: 4, Maximum: 10, Average: 7.25, Mode: [8], Median: 7.5, StandardDeviation: 1.5 });
   le("/5/grades/final/values/myGradeValue", { DisplayedGrade: "80%", PointsNumerator: 8, PointsDenominator: 10 });
   const newsItem = { Id: 1, Title: "Matrix news", Body: { Text: "Read the matrix notes" }, IsPublished: true, CreatedDate: date(-1), LastModifiedDate: date(0),
     Attachments: [{ FileId: 32, FileName: "rooms.html", Size: 25 }] };
@@ -60,6 +61,10 @@ export function studentCourseFixture() {
   const topics = [101, 102, 103].map(Id => ({ Id, TopicId: Id, Type: 1, TopicType: 1, Title: "Matrix notes", IsHidden: false, IsLocked: false }));
   le("/5/content/modules/100/structure/", topics);
   le("/5/content/toc", { Modules: [{ ModuleId: 100, Title: "Matrix lectures", Topics: topics }] });
+  const completion = (ObjectId: number, CompletedItems: number) =>
+    ({ Objects: [{ OrgUnitId: "5", UserId: "42", ObjectId, Title: "Matrix", RequiredItems: 3, CompletedItems }], Next: null });
+  le("/5/content/completions/mycount/?level=1", completion(0, 1));
+  le("/5/content/completions/mycount/?level=2", completion(100, 1));
   le("/5/content/myItems/", [{ ItemId: 101, ItemName: "Matrix notes", CompletionType: 2, DateCompleted: null, DueDate: date(1) }]);
   // Cross-course scheduled content (the fixture ignores the query string).
   le("/content/myItems/", { Objects: [{ OrgUnitId: 5, ItemId: 101, ItemName: "Matrix notes", CompletionType: 2, DateCompleted: null, DueDate: date(1) }], Next: null });

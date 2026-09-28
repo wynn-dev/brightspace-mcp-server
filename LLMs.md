@@ -85,12 +85,12 @@ Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/sc
 | Tool | Purpose |
 |------|---------|
 | `check_auth` | Authentication status |
-| `get_my_courses` | Discover enrolled courses by name/code, semester, dates and recent access |
-| `get_my_grades` | Released final grade and grade items for a course or all courses |
+| `get_my_courses` | Discover enrolled courses by name/code, semester, dates and recent access; opt-in per-course content `progress` |
+| `get_my_grades` | Released final grade and grade items for a course or all courses; opt-in shared class statistics for one course |
 | `get_assignments` | Assignment/quiz summaries; `detail` for instructions, rubrics, history and feedback |
 | `get_announcements` | Recent course announcements, with attachment references readable via `read_course_content` |
 | `get_syllabus` | Syllabus text for a course; optional attachment saves are stdio only |
-| `get_course_content` | Compact module/topic outline (one TOC request); full descriptions on request |
+| `get_course_content` | Compact module/topic outline (one TOC request) with course and top-level module `progress`; full descriptions on request |
 | `read_course_content` | Read PDF, HTML, or plain-text course files in memory (content topics, or `attachment` for assignment briefs, your own feedback files and announcement files), with PDF page references and continuation |
 | `get_discussions` | Forums/topics or paginated posts, thread, unread, recent and own-author filters; preserves read state |
 | `get_roster` | Paginated classlist with institution role-name selection and explicit access status |
@@ -98,7 +98,7 @@ Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/sc
 | `get_my_work` | Overdue/upcoming work with explicit completion and source coverage; undated work counted |
 | `get_submission_history` | Individual/group submissions and published feedback/rubrics; feedback files readable via `read_course_content` |
 | `get_course_updates` | On-demand update counts, recent feed and edited news |
-| `get_grade_summary` | Grade rules and conditional in-memory projections; official final separate |
+| `get_grade_summary` | Grade rules and conditional in-memory projections; official final separate; opt-in shared class statistics |
 | `search_course` | Bounded keyword search with coverage and source references |
 | `get_my_groups` | Own groups, sections and linked group assignments |
 | `get_calendar` | Full calendar with event types, recurrence, locations and time-zone display |
@@ -108,6 +108,8 @@ Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/sc
 All data tools include a second text block plus `structuredContent.readStatus` with read counts, cache freshness, failed sources and limits. `structuredContent` must carry the full payload (arrays as `items`) because structured-content clients show it instead of the text; `read_course_content` responses with PDF page images omit it so the image blocks stay visible. Check `partial` before interpreting an empty result. Follow `nextOffset` or discussion `nextPage` with unchanged filters. File reading uses its separate content-bound `nextCursor`. Never equate unavailable data with no work, active enrollment with current semester, or null grades with zero.
 
 The HTTP transport exposes 19 tools; stdio adds `download_file`. Course-scoped tools accept `courseId` or `course` (name/code). `get_roster` with `includeStudents` covers classmate emails; `get_my_work` covers due dates. HTTP `get_syllabus` uses a strict schema without `downloadPath`. Read-only tools must use GET-only API methods and must not write files or update read/completion state. Grade scenarios must fail closed when rules, exemptions or pagination completeness cannot be verified.
+
+Content `progress` (`{ completed, required }`, from `/content/completions/mycount/` levels 1 and 2 in `src/services/progress.ts`) counts required topics only; a denied, missing or malformed count is `null`/omitted with a `readStatus` entry, never zero. Class statistics (`gradeStatistics` in `src/services/grades.ts`) are only available when the instructor shares them: a 403 means "not shared", and probing stops after the first 403 in a course (the first item runs alone, then at most four in flight), listing the rest as `notChecked`. Statistics never feed the grade calculation.
 
 ## Codebase map
 
@@ -128,7 +130,7 @@ src/
     tool-helpers.ts         Shared helpers (course resolution, formatting)
     get-*.ts                One file per tool
     download-file.ts        Binary download + file-type detection
-  services/                 Shared assignments, calendar, discussions, grades and API boundary mapping
+  services/                 Shared assignments, calendar, discussions, grades, content progress and API boundary mapping
   api/
     client.ts               HTTP client wrapping the Valence/D2L API
     version-discovery.ts    Resolves per-product API versions

@@ -10,6 +10,7 @@ import { defineTool } from "./define-tool.js";
 import { toolResponse } from "./tool-helpers.js";
 import { readList, rows, id, str, num, richText, type Row } from "../services/data.js";
 import { recordLimit } from "../utils/read-status.js";
+import { courseProgress, moduleProgress, type ContentProgress } from "../services/progress.js";
 import { log } from "../utils/logger.js";
 
 /** Outline descriptions are cut to this many characters unless includeDescriptions is set. */
@@ -21,6 +22,8 @@ interface ModuleNode {
   type: "module";
   moduleId: number;
   title: string;
+  /** Top-level modules only: Brightspace's required-topic completion count. */
+  progress?: ContentProgress;
   description?: string;
   isHidden?: true;
   isLocked?: true;
@@ -81,7 +84,7 @@ function describe(node: { description?: string }, value: unknown, full: boolean)
  */
 function buildTree(
   modules: Row[], topics: Row[], progress: Map<number, Progress>,
-  options: { typeFilter: string; maxDepth?: number; includeDescriptions: boolean },
+  options: { typeFilter: string; maxDepth?: number; includeDescriptions: boolean; moduleProgress?: Map<number, ContentProgress> | null },
   depth = 0, budget = { nodes: 0 }
 ): ContentNode[] {
   const tree: ContentNode[] = [];
@@ -100,6 +103,8 @@ function buildTree(
       // Only include module if it has matching children (or filter is 'all')
       if (options.typeFilter !== "all" && children.length === 0) continue;
       const head: Omit<ModuleNode, "children"> = { type: "module", moduleId: id(module.ModuleId) ?? 0, title: str(module.Title) ?? "" };
+      const counts = depth === 0 ? options.moduleProgress?.get(head.moduleId) : undefined;
+      if (counts) head.progress = counts;
       describe(head, module.Description, options.includeDescriptions);
       if (module.IsHidden === true) head.isHidden = true;
       if (module.IsLocked === true) head.isLocked = true;
@@ -142,14 +147,16 @@ export const registerGetCourseContent = defineTool(
     name: "get_course_content",
     title: "Get Course Content",
     description:
-      "Fetch a compact outline of a course's modules, topics, files, and links with due dates, completion and unread flags. Use this when the user asks about course materials, lecture slides, uploaded files, content structure, or what's in a course module. Use moduleTitle to filter to a specific module (e.g. 'Labs', 'Staff', 'Homeworks') and maxDepth for a table of contents. Nodes are modules (type 'module', moduleId, children) or topics (type 'file', 'link', ...; topicId). Descriptions are shortened to a snippet ending in '…' unless includeDescriptions is true; false flags are omitted. To read a PDF, HTML, or plain-text file, call read_course_content with courseId and the file's topicId. Topic descriptions are not the uploaded file body.",
+      "Fetch a compact outline of a course's modules, topics, files, and links with due dates, completion and unread flags. Use this when the user asks about course materials, lecture slides, uploaded files, content structure, or what's in a course module. Use moduleTitle to filter to a specific module (e.g. 'Labs', 'Staff', 'Homeworks') and maxDepth for a table of contents. Nodes are modules (type 'module', moduleId, children) or topics (type 'file', 'link', ...; topicId). Descriptions are shortened to a snippet ending in '…' unless includeDescriptions is true; false flags are omitted. To read a PDF, HTML, or plain-text file, call read_course_content with courseId and the file's topicId. Topic descriptions are not the uploaded file body. progress ({ completed, required }) is Brightspace's own count of completed vs required topics for the course and on each top-level module; it covers required topics only (optional topics are not counted in required) and is null when Brightspace does not return it: unavailable is not zero.",
     schema: GetCourseContentSchema,
   },
-  async ({ courseId, typeFilter = "all", moduleTitle, maxDepth, includeDescriptions }, { apiClient }) => {
-    const [toc, scheduled] = await Promise.all([
+  async ({ courseId, typeFilter = "all", moduleTitle, maxDepth, includeDescriptions, includeProgress }, { apiClient }) => {
+    const [toc, scheduled, courseCounts, moduleCounts] = await Promise.all([
       apiClient.get<Row>(apiClient.le(courseId, "/content/toc"), { ttl: DEFAULT_CACHE_TTLS.courseContent }),
       // Stable scheduled-content API. Unlisted/optional items have unknown completion.
       readList(apiClient, apiClient.le(courseId, "/content/myItems/")),
+      includeProgress ? courseProgress(apiClient, courseId) : null,
+      includeProgress ? moduleProgress(apiClient, courseId) : null,
     ]);
 
     let modules = rows(toc.Modules);
@@ -164,11 +171,14 @@ export const registerGetCourseContent = defineTool(
       if (itemId) progress.set(itemId, { dueDate: str(p.DueDate), completionType: num(p.CompletionType), dateCompleted: str(p.DateCompleted) });
     }
 
-    const contentTree = buildTree(modules, moduleTitle ? [] : rows(toc.Topics), progress, { typeFilter, maxDepth, includeDescriptions });
+    const contentTree = buildTree(modules, moduleTitle ? [] : rows(toc.Topics), progress,
+      { typeFilter, maxDepth, includeDescriptions, moduleProgress: moduleCounts?.data });
     const { topics: topicCount, modules: moduleCount } = count(contentTree);
 
     log("INFO", `get_course_content: Retrieved ${moduleCount} modules and ${topicCount} topics for course ${courseId} (filter: ${typeFilter})`);
 
-    return toolResponse({ courseId, typeFilter, contentTree, topicCount, moduleCount });
+    // Unavailable counts stay null (see readStatus), never zero.
+    return toolResponse({ courseId, typeFilter, ...includeProgress ? { progress: courseCounts?.data ?? null } : {},
+      contentTree, topicCount, moduleCount });
   }
 );

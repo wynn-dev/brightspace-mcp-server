@@ -4,22 +4,31 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
+import type { D2LApiClient } from "../api/index.js";
 import { GetMyCoursesSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { fetchEnrolledCourses } from "./course-helpers.js";
 import { toolResponse } from "./tool-helpers.js";
-import { readObject, readList, str, object, richText } from "../services/data.js";
+import { readObject, readList, str, object, richText, mapLimit } from "../services/data.js";
+import { courseProgress } from "../services/progress.js";
 import { log } from "../utils/logger.js";
+
+/** Course-level progress reads in flight at once. */
+const PROGRESS_CONCURRENCY = 6;
+
+/** Unavailable progress stays null (see readStatus), never zero. */
+const withProgress = <T extends { id: number }>(apiClient: D2LApiClient, courses: T[]) =>
+  mapLimit(courses, PROGRESS_CONCURRENCY, async course => ({ ...course, progress: (await courseProgress(apiClient, course.id)).data }));
 
 export const registerGetMyCourses = defineTool(
   {
     name: "get_my_courses",
     title: "Get My Courses",
     description:
-      "Fetch your enrolled Brightspace courses with names, codes, and IDs. Use this when the user asks about their courses, enrolled classes, what they're taking this semester, or needs a course ID for other queries.",
+      "Fetch your enrolled Brightspace courses with names, codes, and IDs. Use this when the user asks about their courses, enrolled classes, what they're taking this semester, or needs a course ID for other queries. includeProgress adds progress ({ completed, required }): Brightspace's count of completed vs required content topics per course (required topics only; null when unavailable, not zero), for questions like how far along the user is in each course.",
     schema: GetMyCoursesSchema,
   },
-  async ({ activeOnly: activeOnlyArg, query, includeDetails, semester, onDate, sort }, { apiClient, config }) => {
+  async ({ activeOnly: activeOnlyArg, query, includeDetails, semester, onDate, sort, includeProgress }, { apiClient, config }) => {
     // An explicit per-call argument wins; otherwise fall back to the configured
     // policy. Resolving once keeps the API query and the post-fetch filter in
     // agreement.
@@ -52,10 +61,10 @@ export const registerGetMyCourses = defineTool(
           description: richText(data?.Description), semesterMatch, dateMatch,
           note: "Active enrollment does not imply current semester. Unknown filter matches are retained explicitly." });
       }
-      return toolResponse(detailed);
+      return toolResponse(includeProgress ? await withProgress(apiClient, detailed) : detailed);
     }
 
     log("INFO", `get_my_courses: Retrieved ${courses.length} courses`);
-    return toolResponse(courses);
+    return toolResponse(includeProgress ? await withProgress(apiClient, courses) : courses);
   }
 );
