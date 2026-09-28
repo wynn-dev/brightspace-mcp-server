@@ -88,7 +88,8 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
         return parsed;
       };
       await call("check_auth");
-      expect(await call("get_my_courses", { includeDetails: true })).toMatchObject([{ id: 5, name: "Matrix methods" }]);
+      expect(await call("get_my_courses", { includeDetails: true, includeProgress: true }))
+        .toMatchObject([{ id: 5, name: "Matrix methods", progress: { completed: 1, required: 3 } }]);
       expect(JSON.stringify(await call("get_my_grades", { courseId: 5 }))).toContain("80%");
       expect(await call("get_announcements", { courseId: 5 })).toMatchObject([
         { id: 1, title: "Matrix news", attachments: [{ fileId: 32, name: "rooms.html", size: 25 }] }]);
@@ -105,7 +106,9 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       expect(work.items).toContainEqual(expect.objectContaining({ type: "quiz", state: "in_progress" }));
       expect(work.items.some((i: any) => i.type === "assignment")).toBe(false);
       expect(work.items).toContainEqual(expect.objectContaining({ type: "content", name: "Matrix notes", courseId: 5 }));
-      expect((await call("get_grade_summary", { courseId: 5, scenarios: [{ gradeItemId: 1, points: 9 }] })).calculation).toMatchObject({ status: "calculated", percentage: 90 });
+      const summary = await call("get_grade_summary", { courseId: 5, scenarios: [{ gradeItemId: 1, points: 9 }], includeStatistics: true });
+      expect(summary.calculation).toMatchObject({ status: "calculated", percentage: 90 });
+      expect(summary.statistics).toMatchObject({ status: "available", items: [{ gradeItemId: 1, average: 7.25, mode: [8] }] });
       const start = new Date(Date.now() - 7 * 86400000).toISOString(), end = new Date(Date.now() + 7 * 86400000).toISOString();
       const calendar = await call("get_calendar", { courseId: 5, start, end, timeZone: "Europe/Berlin" });
       expect(calendar.recurrenceExpanded).toBe(true); expect(calendar.items).toHaveLength(2);
@@ -124,7 +127,9 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
         .toMatchObject([{ source: "document", topicId: 102, page: null }]);
       expect((await call("search_course", { courseId: 5, query: "plain text", sources: ["documents"], documentTopicIds: [103] })).items)
         .toMatchObject([{ source: "document", topicId: 103, page: null }]);
-      expect((await call("get_course_content", { courseId: 5 })).topicCount).toBe(3);
+      const content = await call("get_course_content", { courseId: 5 });
+      expect(content).toMatchObject({ topicCount: 3, progress: { completed: 1, required: 3 },
+        contentTree: [{ moduleId: 100, progress: { completed: 1, required: 3 } }] });
       const first = await call("read_course_content", { courseId: 5, topicId: 101, maxChars: 21 });
       expect(first.pages).toMatchObject([{ page: 1, text: "Matrix lecture page o" }]);
       expect(first.nextCursor).toBeTruthy();

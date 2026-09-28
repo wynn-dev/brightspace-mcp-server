@@ -32,4 +32,6 @@ export const SearchSchema = z.object({ courseId: courseId.optional(), query: z.s
   documentOffset: z.coerce.number().int().min(0).default(0), maxDocuments: z.coerce.number().int().min(1).max(10).default(3),
   maxDocumentChars: z.coerce.number().int().min(100).max(50_000).default(20_000),
   documentTopicIds: z.array(courseId).min(1).max(10).optional(), ...paging });
-export const GradeSchema = z.object({ courseId, scenarios: z.array(z.object({ gradeItemId: courseId, points: z.number().finite().min(0) })).max(100).default([]) });
+export const GradeSchema = z.object({ courseId, scenarios: z.array(z.object({ gradeItemId: courseId, points: z.number().finite().min(0) })).max(100).default([]),
+  includeStatistics: z.boolean().default(false)
+    .describe("Add class statistics (min, max, average, median, mode, standard deviation) per grade item where the instructor shares them. One extra read per item.") });

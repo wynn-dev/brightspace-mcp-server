@@ -28,10 +28,14 @@ export const GetMyCoursesSchema = z.object({
     .describe(
       "Only return currently active courses. Defaults to the server's configured activeOnly setting (true unless overridden)."
     ),
+  includeProgress: z.boolean().default(false)
+    .describe("Add each course's content progress ({ completed, required }): Brightspace's count of completed vs required content topics, required topics only. One extra read per course; null when unavailable, never zero."),
 });
 
 export const GetMyGradesSchema = z.object({
   courseId: z.coerce.number().int().positive().optional().describe("Course ID to get grades for. If omitted, returns grades for all enrolled courses."),
+  includeStatistics: z.boolean().default(false)
+    .describe("Requires courseId. Add class statistics (min, max, average, median, mode, standard deviation) per grade item where the instructor shares them. One extra read per item."),
 });
 
 export const GetAnnouncementsSchema = z.object({
@@ -60,6 +64,8 @@ export const GetCourseContentSchema = z.object({
     .describe("Limit recursive depth of the content tree. Depth 1 returns top-level modules with direct children only. Useful for getting a table of contents without all nested content."),
   includeDescriptions: z.boolean().default(false)
     .describe("Return full module/topic descriptions as Markdown instead of short snippets."),
+  includeProgress: z.boolean().default(true)
+    .describe("Include Brightspace's completed vs required topic counts for the course and each top-level module (required topics only). Set false to skip these two reads."),
 });
 
 export const ReadCourseContentSchema = z.object({

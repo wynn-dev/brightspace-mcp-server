@@ -35,7 +35,8 @@ describe("get_course_content", () => {
       type: "file", topicId: 10, title: "Slides", dueDate: "2026-09-02T00:00:00Z",
       isCompleted: true, completedDate: "2026-09-01T00:00:00Z", unread: true, description: "pdf",
     });
-    expect(apiClient.requested.filter(p => p.includes("/content/"))).toHaveLength(2);
+    // TOC + scheduled items, plus the two progress counts (course and top-level modules).
+    expect(apiClient.requested.filter(p => p.includes("/content/"))).toHaveLength(4);
   });
 
   it("shortens descriptions to snippets unless full descriptions are requested", async () => {
