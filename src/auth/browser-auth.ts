@@ -17,6 +17,8 @@ import { PurdueSSOFlow } from "./purdue-sso.js";
 import { TUDelftSSOFlow } from "./tudelft-sso.js";
 import { CredentialsRejectedError } from "./sso-flow.js";
 import type { SSOFlow } from "./sso-flow.js";
+import { LoginFailedError } from "./login-failure.js";
+import { resolveTokenExpiry } from "./token-expiry.js";
 
 interface TokenInterception {
   promise: Promise<string>;
@@ -28,6 +30,38 @@ const WHOAMI_PATH = "/d2l/api/lp/1.45/users/whoami";
 
 /** Quarantined browser profiles only matter for a post-mortem; drop them after a week. */
 const QUARANTINE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** localStorage key where Brightspace's web components cache their API token. */
+const FETCH_TOKENS_KEY = "D2L.Fetch.Tokens";
+
+/**
+ * A restored D2L.Fetch.Tokens entry with less life left than this is dropped,
+ * so the page mints a fresh token from the session cookies instead of handing
+ * back one that is about to expire (which would make refreshes pointless).
+ */
+const MIN_REUSED_TOKEN_LIFETIME_MS = 30 * 60 * 1000;
+
+interface ExtractedToken {
+  token: string;
+  /** expires_at stored next to the token by Brightspace, if any. */
+  expiresAt?: unknown;
+}
+
+interface StoredCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires: number;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: "Strict" | "Lax" | "None";
+}
+
+/** Drop cookies whose own expiry has passed; session cookies (expires -1) are kept. */
+export function unexpiredCookies<C extends { expires: number }>(cookies: C[], now = Date.now()): C[] {
+  return cookies.filter((c) => !(c.expires > 0 && c.expires * 1000 <= now));
+}
 
 export class BrowserAuth {
   private config: AppConfig;
@@ -304,15 +338,8 @@ export class BrowserAuth {
 
         const accessToken = await freshInterception.promise;
         log("INFO", "Bearer token captured after forced re-login");
-        const now = Date.now();
-        const tokenData: TokenData = {
-          accessToken,
-          capturedAt: now,
-          expiresAt: now + this.config.tokenTtl * 1000,
-          source: "browser",
-        };
         await this.saveStorageState(context);
-        return tokenData;
+        return this.tokenData(accessToken);
       }
 
       // Fresh-login final fallback: wait on the passive listener.
@@ -321,17 +348,9 @@ export class BrowserAuth {
       const accessToken = await tokenInterception.promise;
       log("INFO", "Bearer token captured successfully");
 
-      const now = Date.now();
-      const tokenData: TokenData = {
-        accessToken,
-        capturedAt: now,
-        expiresAt: now + this.config.tokenTtl * 1000,
-        source: "browser",
-      };
-
       await this.saveStorageState(context);
       log("INFO", "Authentication complete");
-      return tokenData;
+      return this.tokenData(accessToken);
     } catch (error) {
       log("ERROR", "Browser authentication failed", error);
 
@@ -375,21 +394,11 @@ export class BrowserAuth {
    * /users/whoami before being returned. Returns null if both attempts fail.
    */
   private async tryExtractToken(page: Page): Promise<TokenData | null> {
-    const build = (token: string): TokenData => {
-      const now = Date.now();
-      return {
-        accessToken: token,
-        capturedAt: now,
-        expiresAt: now + this.config.tokenTtl * 1000,
-        source: "browser",
-      };
-    };
-
     // Strategy 0: localStorage (D2L.Fetch.Tokens) — fastest
     const lsToken = await this.extractLocalStorageToken(page);
-    if (lsToken && (await this.validateToken(lsToken))) {
+    if (lsToken && (await this.validateToken(lsToken.token))) {
       log("INFO", "Extracted valid Bearer token from localStorage");
-      return build(lsToken);
+      return this.tokenData(lsToken.token, lsToken.expiresAt);
     }
     if (lsToken) log("WARN", "localStorage Bearer token failed validation, trying next strategy");
 
@@ -401,15 +410,26 @@ export class BrowserAuth {
         { waitUntil: "load", timeout: 15000 }
       );
       const lsToken2 = await this.extractLocalStorageToken(page);
-      if (lsToken2 && (await this.validateToken(lsToken2))) {
+      if (lsToken2 && (await this.validateToken(lsToken2.token))) {
         log("INFO", "Extracted valid Bearer token from localStorage after API nudge");
-        return build(lsToken2);
+        return this.tokenData(lsToken2.token, lsToken2.expiresAt);
       }
     } catch {
       log("DEBUG", "Direct API navigation did not produce Bearer token");
     }
 
     return null;
+  }
+
+  /**
+   * Wrap a captured token with its real expiry: Brightspace's own expires_at,
+   * else the JWT exp claim, else the configured tokenTtl.
+   */
+  private tokenData(accessToken: string, storedExpiry?: unknown): TokenData {
+    const now = Date.now();
+    const expiresAt = resolveTokenExpiry(accessToken, storedExpiry, this.config.tokenTtl, now);
+    log("DEBUG", `Token expires in ${Math.round((expiresAt - now) / 60000)} min`);
+    return { accessToken, capturedAt: now, expiresAt, source: "browser" };
   }
 
   /**
@@ -563,9 +583,11 @@ export class BrowserAuth {
 
         if (!loginSuccess) {
           if (this.headless) {
-            throw new BrowserAuthError(
-              "Automated SSO login failed and the browser is headless, so manual login is impossible. Re-run with D2L_HEADLESS=false to log in by hand.",
-              "sso_login"
+            const failure = this.ssoFlow.lastFailure;
+            throw new LoginFailedError(
+              `Automated SSO login failed${failure ? ` (${failure.detail})` : ""} and the browser is headless, so manual login is impossible. Re-run with D2L_HEADLESS=false to log in by hand.`,
+              "sso_login",
+              failure?.kind ?? "interaction"
             );
           }
           log("WARN", "Automated SSO flow failed or timed out. Falling back to manual login.");
@@ -625,7 +647,7 @@ export class BrowserAuth {
    * Try to extract Bearer token from D2L's localStorage.
    * D2L stores API tokens in localStorage under "D2L.Fetch.Tokens".
    */
-  private async extractLocalStorageToken(page: Page): Promise<string | null> {
+  private async extractLocalStorageToken(page: Page): Promise<ExtractedToken | null> {
     try {
       // Navigate to Brightspace home if not already there
       const currentUrl = page.url();
@@ -636,27 +658,27 @@ export class BrowserAuth {
         });
       }
 
-      const token = await page.evaluate(() => {
+      const found = await page.evaluate((key) => {
         try {
-          const tokensJson = localStorage.getItem("D2L.Fetch.Tokens");
+          const tokensJson = localStorage.getItem(key);
           if (!tokensJson) return null;
 
           const tokens = JSON.parse(tokensJson);
           // Tokens are stored as { "*:*:*": { access_token: "...", expires_at: ... } }
           const wildcardToken = tokens["*:*:*"];
           if (wildcardToken && wildcardToken.access_token) {
-            return wildcardToken.access_token;
+            return { token: String(wildcardToken.access_token), expiresAt: wildcardToken.expires_at };
           }
 
           return null;
         } catch {
           return null;
         }
-      });
+      }, FETCH_TOKENS_KEY);
 
-      if (token) {
+      if (found) {
         log("DEBUG", "Found Bearer token in localStorage (D2L.Fetch.Tokens)");
-        return token;
+        return found;
       }
 
       return null;
@@ -677,48 +699,31 @@ export class BrowserAuth {
         "storage-state.json"
       );
 
-      // Check if storage state file exists
-      let stats: Awaited<ReturnType<typeof fs.stat>>;
+      // Read storage state. Its age doesn't matter: each cookie carries its
+      // own expiry, and navigateAndLogin() verifies the restored session with
+      // a whoami probe, so stale-but-unexpired cookies can't fake a login.
+      let stateJson: string;
       try {
-        stats = await fs.stat(storageStatePath);
+        stateJson = await fs.readFile(storageStatePath, "utf-8");
       } catch {
         log("DEBUG", "No existing storage state to load");
         return;
       }
-
-      // Skip loading stale cookies that would fake "already authenticated"
-      const ageMs = Date.now() - stats.mtimeMs;
-      const maxAgeMs = this.config.tokenTtl * 1000;
-      if (ageMs > maxAgeMs) {
-        log("INFO", `Storage state is ${Math.round(ageMs / 60000)}min old (TTL ${this.config.tokenTtl}s) — skipping stale cookies`);
-        return;
-      }
-
-      // Read storage state
-      const stateJson = await fs.readFile(storageStatePath, "utf-8");
       const state = JSON.parse(stateJson) as {
-        cookies: Array<{
-          name: string;
-          value: string;
-          domain: string;
-          path: string;
-          expires: number;
-          httpOnly: boolean;
-          secure: boolean;
-          sameSite: "Strict" | "Lax" | "None";
-        }>;
+        cookies: StoredCookie[];
         origins: Array<{
           origin: string;
           localStorage: Array<{ name: string; value: string }>;
         }>;
       };
 
-      // Restore cookies
-      if (state.cookies && state.cookies.length > 0) {
-        await context.addCookies(state.cookies);
+      // Restore cookies that haven't expired on their own
+      const cookies = unexpiredCookies(state.cookies ?? []);
+      if (cookies.length > 0) {
+        await context.addCookies(cookies);
         log(
           "INFO",
-          `Restored ${state.cookies.length} cookies from storage state`
+          `Restored ${cookies.length} cookies from storage state (${(state.cookies?.length ?? 0) - cookies.length} expired skipped)`
         );
       }
 
@@ -732,12 +737,20 @@ export class BrowserAuth {
               tempPage = await context.newPage();
               await tempPage.goto(origin.origin, { timeout: 10000 });
 
-              // Set each localStorage item
-              await tempPage.evaluate((items) => {
+              // Set each localStorage item, then drop a cached API token that
+              // is about to expire so the page mints a fresh one
+              await tempPage.evaluate(({ items, key, minExpiresAt }) => {
                 for (const item of items) {
                   localStorage.setItem(item.name, item.value);
                 }
-              }, origin.localStorage);
+                try {
+                  const raw = JSON.parse(localStorage.getItem(key) ?? "null")?.["*:*:*"]?.expires_at;
+                  const expiresMs = Number(raw) < 1e12 ? Number(raw) * 1000 : Number(raw);
+                  if (raw !== undefined && !(expiresMs > minExpiresAt)) localStorage.removeItem(key);
+                } catch {
+                  localStorage.removeItem(key);
+                }
+              }, { items: origin.localStorage, key: FETCH_TOKENS_KEY, minExpiresAt: Date.now() + MIN_REUSED_TOKEN_LIFETIME_MS });
 
               log(
                 "INFO",

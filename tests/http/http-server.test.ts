@@ -7,6 +7,13 @@ import { createMcpServer } from "../../src/server.js";
 import type { AppConfig } from "../../src/types/index.js";
 import { makePdf } from "../fixtures/pdf.js";
 import { secureDownload } from "../../src/utils/download-helpers.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { TokenManager } from "../../src/auth/token-manager.js";
+import { AuthRunner } from "../../src/auth/auth-runner.js";
+import { LoginBreaker } from "../../src/auth/login-breaker.js";
+import { publicAuthStatus, readAuthStatus } from "../../src/auth/auth-status.js";
 
 vi.mock("../../src/utils/download-helpers.js", () => ({ secureDownload: vi.fn() }));
 
@@ -63,7 +70,10 @@ const tokenManager = {
   })),
 };
 
-const authRunner = { run: vi.fn(async () => true) };
+const authRunner = {
+  run: vi.fn(async () => true),
+  status: vi.fn(async () => ({ open: false, lastAttempt: null, retryAt: null })),
+};
 
 const makeServer = () =>
   createMcpServer({
@@ -349,6 +359,61 @@ describe("Streamable HTTP MCP server", () => {
       });
       expect(res.status).toBe(403);
       expect(running.sessionCount()).toBe(0);
+    });
+  });
+
+  describe("health and activity", () => {
+    it("reports auth health from the stored login state and returns 503 while logins fail", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "healthz-"));
+      const tokenManager = new TokenManager(dir);
+      const breaker = new LoginBreaker(dir, () => ({ fingerprint: "v1" }));
+      const runner = new AuthRunner(dir, breaker);
+      const server = await startHttpServer({
+        host: "127.0.0.1",
+        port: 0,
+        authToken: TOKEN,
+        createServer: makeServer,
+        health: async () => {
+          const auth = await readAuthStatus(tokenManager, runner);
+          return { healthy: auth.state !== "failing", details: { version: "9.9.9", startedAt: "2026-09-28T00:00:00.000Z", auth: publicAuthStatus(auth) } };
+        },
+      });
+      const health = async () => {
+        const res = await raw(server, { method: "GET", path: "/healthz" });
+        return { status: res.status, body: JSON.parse(res.body) };
+      };
+      try {
+        expect(await health()).toMatchObject({ status: 200, body: { status: "ok", version: "9.9.9", auth: { state: "expired", lastLogin: null } } });
+
+        await tokenManager.setToken({ accessToken: "secret-access-token", capturedAt: Date.now(), expiresAt: Date.now() + 40 * 60_000, source: "browser" });
+        await breaker.recordSuccess();
+        const ok = await health();
+        expect(ok).toMatchObject({ status: 200, body: { status: "ok", auth: { state: "valid", expiresInMinutes: 40, lastLogin: { ok: true } } } });
+
+        await breaker.recordFailure("credentials", "netid rejected");
+        const failing = await health();
+        expect(failing).toMatchObject({ status: 503, body: { status: "degraded", auth: { state: "failing", retriesPaused: true, lastLogin: { ok: false, kind: "credentials" } } } });
+        expect(JSON.stringify(failing.body)).not.toMatch(/secret-access-token|netid/);
+      } finally {
+        await server.close();
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("signals tool calls (but not other MCP traffic) for the background refresher", async () => {
+      const onToolCall = vi.fn();
+      const server = await startHttpServer({ host: "127.0.0.1", port: 0, authToken: TOKEN, createServer: makeServer, onToolCall });
+      const { client, transport } = await connect(server);
+      try {
+        await client.listTools();
+        expect(onToolCall).not.toHaveBeenCalled();
+        await client.callTool({ name: "check_auth", arguments: {} });
+        expect(onToolCall).toHaveBeenCalledTimes(1);
+      } finally {
+        await transport.terminateSession();
+        await client.close();
+        await server.close();
+      }
     });
   });
 

@@ -57,6 +57,7 @@ export class TUDelftSSOFlow extends BaseSSOFlow {
 
   async login(page: Page): Promise<boolean> {
     const { username, password } = this.requireCredentials();
+    this.lastFailure = null;
     log("INFO", "Starting TU Delft SSO login flow (login.tudelft.nl via SURFconext)");
 
     // Saved storage state also carries the IdP's own session cookies. When
@@ -73,7 +74,7 @@ export class TUDelftSSOFlow extends BaseSSOFlow {
     }
     if (arrival !== "form") {
       log("WARN", `TU Delft login form never appeared — last URL: ${page.url()}`);
-      return false;
+      return this.fail("sso_changed", `the NetID login form never appeared (last page: ${pageLocation(page)})`);
     }
 
     log("INFO", "Entering NetID credentials");
@@ -118,6 +119,19 @@ export class TUDelftSSOFlow extends BaseSSOFlow {
     }
 
     log("WARN", `TU Delft SSO login timed out — last URL: ${page.url()}`);
-    return false;
+    return this.fail(
+      "sso_changed",
+      `no Brightspace home, error or consent page appeared after submitting credentials (last page: ${pageLocation(page)})`
+    );
+  }
+}
+
+/** Host and path of the current page, without query strings that may carry SAML state. */
+function pageLocation(page: Page): string {
+  try {
+    const url = new URL(page.url());
+    return `${url.host}${url.pathname}`;
+  } catch {
+    return "unknown";
   }
 }

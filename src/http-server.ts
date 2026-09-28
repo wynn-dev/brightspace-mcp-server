@@ -13,6 +13,8 @@ import { log } from "./utils/logger.js";
 import { loadEnvFiles } from "./utils/env.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
+import { describeAuthFailure, publicAuthStatus, readAuthStatus } from "./auth/auth-status.js";
+import { SessionRefresher } from "./auth/session-refresher.js";
 import { D2LApiClient } from "./api/index.js";
 import { createMcpServer, PKG_VERSION } from "./server.js";
 import { startHttpServer, isLoopbackHost } from "./http/server.js";
@@ -50,22 +52,23 @@ async function main(): Promise<void> {
   log("INFO", "");
   if (envFiles.length > 0) log("INFO", `Loaded environment from ${envFiles.join(", ")}`);
 
+  const startedAt = new Date().toISOString();
   const tokenManager = new TokenManager(config.sessionDir);
-  const authRunner = new AuthRunner();
+  const authRunner = new AuthRunner(config.sessionDir);
   const apiClient = new D2LApiClient({
     baseUrl: config.baseUrl,
     tokenManager,
     onAuthExpired: () => authRunner.run(),
+    describeAuthFailure: () => describeAuthFailure(tokenManager, authRunner),
+    versionCacheDir: config.sessionDir,
   });
 
-  try {
-    await apiClient.initialize();
-    log("INFO", "D2L API Client initialized");
-  } catch (error) {
-    log("ERROR", "Failed to initialize D2L API Client", error);
-    log("ERROR", "MCP server cannot start without API initialization. Exiting.");
-    process.exit(1);
-  }
+  // Never exits: falls back to cached versions and keeps retrying in the background
+  await apiClient.initialize();
+  log("INFO", "D2L API Client initialized");
+
+  // Keep the session warm while the server is in use
+  const refresher = new SessionRefresher({ tokenManager, authRunner });
 
   const running = await startHttpServer({
     host,
@@ -81,6 +84,14 @@ async function main(): Promise<void> {
         config,
         includeDownloadFile: false,
       }),
+    onToolCall: () => refresher.noteToolCall(),
+    health: async () => {
+      const auth = await readAuthStatus(tokenManager, authRunner);
+      return {
+        healthy: auth.state !== "failing",
+        details: { version: PKG_VERSION, startedAt, auth: publicAuthStatus(auth) },
+      };
+    },
   });
 
   log("INFO", `Brightspace MCP Server listening on ${running.url} (20 read-only tools)`);
@@ -95,6 +106,8 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: NodeJS.Signals) => {
     log("INFO", `Received ${signal} — shutting down HTTP MCP server`);
+    refresher.stop();
+    apiClient.dispose();
     try {
       await running.close();
     } finally {

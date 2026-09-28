@@ -49,6 +49,13 @@ export interface D2LApiClientOptions {
   timeoutMs?: number; // default 30_000
   /** Called when auth is expired and retries are exhausted. Return true if re-auth succeeded. */
   onAuthExpired?: () => Promise<boolean>;
+  /** Explains a failed re-auth to the user (reason, next retry); null for the generic message. */
+  describeAuthFailure?: () => Promise<string | null>;
+  /**
+   * Directory for the last discovered API versions, used when discovery
+   * fails at startup (Brightspace maintenance, no network yet).
+   */
+  versionCacheDir?: string;
 }
 
 // Re-export TokenData from shared types for convenience

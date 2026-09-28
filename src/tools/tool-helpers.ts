@@ -6,7 +6,7 @@
 
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { ZodError } from "zod";
-import { ApiError, RateLimitError, NetworkError } from "../api/index.js";
+import { ApiError, AuthUnavailableError, RateLimitError, NetworkError } from "../api/index.js";
 import { ContentReadError } from "../utils/content-reader.js";
 import { log } from "../utils/logger.js";
 
@@ -72,6 +72,7 @@ export function sanitizeError(error: unknown): CallToolResult {
     }
     if (error.status === 401) {
       return errorResponse(
+        error instanceof AuthUnavailableError ? error.userMessage :
         "Authentication expired. Auto-reauthentication was attempted but failed. " +
         "Please run `pnpm run auth` in the project directory, then try again."
       );
