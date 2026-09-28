@@ -10,6 +10,7 @@ import { defineTool } from "./define-tool.js";
 import { fetchEnrolledCourses, settleAcrossCourses } from "./course-helpers.js";
 import { toolResponse } from "./tool-helpers.js";
 import { log } from "../utils/logger.js";
+import { readObject, str, num } from "../services/data.js";
 
 interface GradeValue {
   GradeObjectIdentifier: string;
@@ -40,12 +41,22 @@ function mapGradeValue(gv: GradeValue) {
   };
 }
 
+/** Released final grade; 404/403 usually mean it has not been released to you. */
+async function fetchFinalGrade(apiClient: D2LApiClient, courseId: number) {
+  const final = await readObject(apiClient, apiClient.le(courseId, "/grades/final/values/myGradeValue"));
+  return {
+    finalGrade: final.data ? { displayGrade: str(final.data.DisplayedGrade), points: num(final.data.PointsNumerator),
+      maxPoints: num(final.data.PointsDenominator) } : null,
+    finalGradeStatus: final.status,
+  };
+}
+
 async function fetchCourseGrades(apiClient: D2LApiClient, courseId: number) {
-  const values = await apiClient.get<GradeValue[]>(
-    apiClient.le(courseId, "/grades/values/myGradeValues/"),
-    { ttl: DEFAULT_CACHE_TTLS.grades }
-  );
-  return values.map(mapGradeValue);
+  const [values, final] = await Promise.all([
+    apiClient.get<GradeValue[]>(apiClient.le(courseId, "/grades/values/myGradeValues/"), { ttl: DEFAULT_CACHE_TTLS.grades }),
+    fetchFinalGrade(apiClient, courseId),
+  ]);
+  return { ...final, grades: values.map(mapGradeValue) };
 }
 
 export const registerGetMyGrades = defineTool(
@@ -53,21 +64,21 @@ export const registerGetMyGrades = defineTool(
     name: "get_my_grades",
     title: "Get My Grades",
     description:
-      "Fetch your grade breakdown for a specific course or all enrolled courses. Shows grade items with points, percentages, and comments. Use this when the user asks about grades, scores, marks, GPA, academic performance, or how they're doing in a class.",
+      "Fetch your released final/overall grade and grade breakdown for a specific course or all enrolled courses. Shows grade items with points, percentages, and comments; finalGrade is null until released (see finalGradeStatus). For what-if scenarios or how the grade is calculated, use get_grade_summary. Use this when the user asks about grades, scores, marks, GPA, academic performance, or how they're doing in a class.",
     schema: GetMyGradesSchema,
   },
   async ({ courseId }, { apiClient, config }) => {
     if (courseId) {
-      const grades = await fetchCourseGrades(apiClient, courseId);
-      log("INFO", `get_my_grades: Retrieved ${grades.length} grade items for course ${courseId}`);
-      return toolResponse({ courseId, grades });
+      const result = await fetchCourseGrades(apiClient, courseId);
+      log("INFO", `get_my_grades: Retrieved ${result.grades.length} grade items for course ${courseId}`);
+      return toolResponse({ courseId, ...result });
     }
 
     const enrolled = await fetchEnrolledCourses(apiClient, config);
     const courses = await settleAcrossCourses(enrolled, "get_my_grades", async (course) => ({
       courseId: course.id,
       courseName: course.name,
-      grades: await fetchCourseGrades(apiClient, course.id),
+      ...await fetchCourseGrades(apiClient, course.id),
     }));
 
     log("INFO", `get_my_grades: Retrieved grades for ${courses.length} of ${enrolled.length} courses`);

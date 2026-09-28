@@ -54,7 +54,7 @@ MCP_AUTH_TOKEN="$(openssl rand -hex 32)" MCP_HTTP_HOST=0.0.0.0 pnpm run start:ht
 
 Or put those settings in `.env` / `.env.local` (see `.env.example`) and just run `pnpm run start:http`.
 
-This exposes the 20 read-only tools at `http://<host>:8787/mcp`, including `read_course_content`. `download_file` is left out, and `get_syllabus` rejects `downloadPath` over HTTP, so course files cannot be saved to the server's disk through these tools. Clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`:
+This exposes the 18 read-only tools at `http://<host>:8787/mcp`, including `read_course_content`. `download_file` is left out, and `get_syllabus` rejects `downloadPath` over HTTP, so course files cannot be saved to the server's disk through these tools. Clients send `Authorization: Bearer <MCP_AUTH_TOKEN>`:
 
 ```bash
 claude mcp add --transport http brightspace http://your-host:8787/mcp --header "Authorization: Bearer <token>"
@@ -74,7 +74,7 @@ On a headless host, set `"headless": true` in `~/.brightspace-mcp/config.json` s
 
 Run `pnpm run diagnose` for the local stdio server, or `pnpm run diagnose --http https://your-host/mcp` for HTTP. The HTTP diagnostic reads `MCP_AUTH_TOKEN` from the environment/configured env files; do not put tokens in command arguments. Omitting the URL uses the first `MCP_ALLOWED_HOSTS` entry over HTTPS, or the local port if no host is configured. The diagnostic initializes MCP and reads `tools/list` without calling Brightspace tools. It reports the running version, expected/advertised tools, and missing names; differences produce a nonzero exit code.
 
-Expect **21 tools over stdio and 20 over HTTP**. If tools are missing or the running version differs, run `pnpm run update` (or `pnpm run build` for local changes), then restart the server process. If discovery already contains all tools but your client shows fewer, refresh/reconnect the MCP connection or restart that client. Updating files does not replace an already running process, and clients may retain the old tool list. `check_auth` also includes the running version and tool inventory in its structured response.
+Expect **19 tools over stdio and 18 over HTTP**. If tools are missing or the running version differs, run `pnpm run update` (or `pnpm run build` for local changes), then restart the server process. If discovery already contains all tools but your client shows fewer, refresh/reconnect the MCP connection or restart that client. Updating files does not replace an already running process, and clients may retain the old tool list. `check_auth` also includes the running version and tool inventory in its structured response.
 
 ## Reading course materials
 
@@ -101,15 +101,17 @@ Scanned pages have no extractable text; read them from their page images (no OCR
 
 These tools work over both transports and only read Brightspace data. They do not submit coursework, change grades, join groups, check checklist items, or mark discussions as read.
 
+Every course-scoped tool accepts `course` — a course name or code such as `"Reasoning"` or `"CSE11A"` — instead of `courseId`. Active courses are matched first (inactive ones only if nothing active matches); an ambiguous name returns the candidate courses with their IDs rather than guessing. The server also sends MCP `instructions` at initialization with a short guide to which tool answers which question.
+
 | Tool | What it reads |
 |---|---|
 | `get_my_work` | Assignments, quizzes, scheduled content and calendar deadlines, including overdue work. Useful for a weekly briefing. Undated work is counted in `undatedExcluded` (list it with `includeUndated: true`); `includeCalendarContext: true` adds non-deadline calendar events. Completion, exemptions and unavailable sources stay explicit. |
 | `get_submission_history` | All available individual/group submissions for a `folderId`, newest first, plus released feedback, rubric assessments and attachment/link references. |
-| `get_course_updates` | Batch update counts, user feed and news created or edited since `since`; includes pinned announcements. This is an on-demand view, not a complete change log. |
+| `get_course_updates` | Batch update counts, user feed and news created or edited since `since` (default: 7 days ago); includes pinned announcements. This is an on-demand view, not a complete change log. |
 | `get_grade_summary` | Visible grades, grading setup, categories, item rules and official final grade; optional in-memory what-if `scenarios`. |
-| `search_course` | Case-insensitive keyword matches in announcement bodies, assignment instructions, module/topic titles and descriptions, discussions and course descriptions. Opt into `sources: ["documents"]` for bounded PDF/HTML/text body search with PDF page references. |
+| `search_course` | Case-insensitive keyword matches in announcement bodies, assignment instructions, module/topic titles and descriptions, and course descriptions. Discussions (`sources: [..., "discussions"]`) are opt-in because they need many reads. Opt into `sources: ["documents"]` for bounded PDF/HTML/text body search with PDF page references. |
 | `get_my_groups` | Your course groups, sections, group descriptions, enrollment windows and linked group assignments. |
-| `get_calendar` | Reminders, due dates, opening/closing events, locations and recurring occurrences, with UTC and IANA time-zone display. |
+| `get_calendar` | Reminders, due dates, opening/closing events, locations and recurring occurrences, with UTC and IANA time-zone display. `start` defaults to now and `end` to 14 days after `start`. |
 | `get_checklists` | Checklists, categories, item descriptions and due dates. Personal completion is **unknown** because the API does not provide it. |
 
 Existing tools also have more focused options:
@@ -117,10 +119,9 @@ Existing tools also have more focused options:
 - `get_my_courses`: `query` searches names/codes; `includeDetails`, `semester` and `onDate` read course dates and semester metadata; `sort: "recent"` orders by last access. An active enrollment is not proof of the current semester. If course details are denied, dates can fall back to enrollment access metadata and semester filters can use an explicitly typed semester/term ancestor. Each field identifies its source; names/codes alone are not used to infer a term. Courses with unavailable filter metadata are retained with a null match flag.
 - `get_assignments`: returns summary rows (dates, state, submission count, score, quiz attempts) by default; `detail: true` adds instructions, rubrics, attachments, submission history and all feedback. `folderId` selects one assignment (requires `courseId`) and defaults to detail; submission history comes from Brightspace's entity/group response. Quiz attempts are restricted to the authenticated user and only published scores are returned. Own-user special-access routes are checked for personal dates and quiz settings; explicit null dates remove restrictions. Denied, missing or malformed responses leave personal dates unverified. `attemptsRemaining` stays null because a reliable remaining-attempt count requires more than an override. `attemptsRemainingAssumingDefault` is explicitly conditional.
 - `get_syllabus` and `get_roster`: if their primary source is unavailable, `includeContentFallback` (default true) finds up to three accessible course-guide or staff/contact documents. Excerpts are separate candidates with source links and PDF page references; they do not establish an official syllabus or staff membership. Set the option to false to skip those reads.
-- `get_upcoming_due_dates`: `includeReminders: true` adds separately labelled reminders to the familiar calendar workflow. The response guides broader coursework questions to `get_my_work` and recurring events/availability to `get_calendar`.
 - `get_discussions`: supply `forumId` and `topicId`, then optionally `threadId`, `unreadOnly`, `ownOnly` (posts authored by you), `since`, `threadsOnly`, `sort`, `pageNumber` and `pageSize`. Forum-only calls list topics; request a topic to read posts. Forum/topic lists also use `pageNumber` and `pageSize`; follow `nextPage`, or select a forum and follow its `nextTopicPage`.
+- `get_my_grades`: each course includes its released `finalGrade` (`{ displayGrade, points, maxPoints }`) or null with `finalGradeStatus` (e.g. `not_found` before release), next to the grade items. Use `get_grade_summary` for grading rules and what-if projections.
 - `get_roster`: institution-provided role names replace Purdue-only role IDs. Default staff selection uses a name heuristic and exposes available/unrecognized roles. Use `roleNames` for exact institution labels or `includeStudents` for everyone. Denied classlist access is reported as unavailable.
-- `get_upcoming_due_dates`: returns events explicitly classified as calendar due dates. Use `get_my_work` for deadlines that are absent from the calendar, and `get_calendar` for reminders and availability windows.
 - `get_course_content`: returns a compact outline built from the course table of contents in a single request. Modules are `{ type: "module", moduleId, title, description?, children }`; topics are `{ type: "file" | "link" | ..., topicId, title, dueDate?, isCompleted, completedDate?, unread?, description?, url? }`, ordered as in Brightspace. Flags that are false (`unread`, `isHidden`, `isLocked`) and absent dates are omitted. Descriptions are cut to a 160-character snippet ending in "…" unless `includeDescriptions: true`. Due dates and completion come from the scheduled-content API; unlisted or optional items have null completion, rather than being reported as unread/incomplete. Reading file text does not update completion.
 
 ### Examples

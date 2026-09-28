@@ -3,7 +3,7 @@ import { z } from "zod";
 import { defineTool } from "../../src/tools/define-tool.js";
 import { toolResponse, errorResponse } from "../../src/tools/tool-helpers.js";
 import { ApiError, RateLimitError, NetworkError } from "../../src/api/index.js";
-import { captureTool, fakeApiClient, parse, text, makeConfig } from "./helpers.js";
+import { captureTool, fakeApiClient, parse, text, makeConfig, enrollment, enrollmentsPage } from "./helpers.js";
 
 const Schema = z.object({
   count: z.coerce.number().int().min(1).default(7),
@@ -116,5 +116,46 @@ describe("defineTool", () => {
     const listed = await make([{ id: 1 }])({});
     expect(listed.structuredContent).toMatchObject({ items: [{ id: 1 }] });
     expect(parse(listed)).toEqual([{ id: 1 }]);
+  });
+
+  describe("course names", () => {
+    const CourseSchema = z.object({ courseId: z.coerce.number().int().positive(), n: z.number().default(1) }).strict();
+    const courses = enrollmentsPage([enrollment(11, "Reasoning and Logic"), enrollment(12, "Linear Algebra"), enrollment(13, "Linear Algebra Lab"),
+      enrollment(14, "Old Reasoning", { isActive: false })]);
+    const make = () => {
+      const seen: unknown[] = [];
+      const register = defineTool({ name: "demo", title: "D", description: "d", schema: CourseSchema }, async (args) => { seen.push(args); return toolResponse(args); });
+      const registerTool = vi.fn();
+      register({ registerTool } as any, fakeApiClient() as any, makeConfig());
+      return { seen, meta: registerTool.mock.calls[0][1], ...captureTool(register, fakeApiClient({ "/enrollments/myenrollments/": courses })) };
+    };
+
+    it("publishes course alongside an optional courseId and keeps strict schemas strict", () => {
+      const { meta } = make();
+      expect(meta.inputSchema.safeParse({ course: "Reasoning" }).success).toBe(true);
+      expect(meta.inputSchema.safeParse({ courseId: 1, extra: true }).success).toBe(false);
+    });
+
+    it("resolves a course name, code or ID string and passes courseId to the body", async () => {
+      const { call } = make();
+      expect(parse(await call({ course: "reasoning" }))).toEqual({ courseId: 11, n: 1 });
+      expect(parse(await call({ course: "CODE-12" }))).toEqual({ courseId: 12, n: 1 });
+      expect(parse(await call({ course: "Linear Algebra" }))).toEqual({ courseId: 12, n: 1 });
+      expect(parse(await call({ course: "13" }))).toEqual({ courseId: 13, n: 1 });
+      // Unmatched numbers fall back to an ID; numbers that appear in names are matched as text.
+      expect(parse(await call({ course: "44" }))).toEqual({ courseId: 44, n: 1 });
+      expect(text(await call({ course: "1" }))).toMatch(/matches 3 courses/);
+      // Inactive courses are only searched when no active course matches.
+      expect(parse(await call({ course: "old reasoning" }))).toEqual({ courseId: 14, n: 1 });
+    });
+
+    it("returns candidates for ambiguous names and requires a course", async () => {
+      const { call } = make();
+      const ambiguous = await call({ course: "algebra" });
+      expect(ambiguous.isError).toBe(true);
+      expect(text(ambiguous)).toMatch(/matches 2 courses: 12 .*13 /);
+      expect(text(await call({ course: "chemistry" }))).toMatch(/No enrolled course matches/);
+      expect(text(await call({}))).toMatch(/Provide courseId or course/);
+    });
   });
 });

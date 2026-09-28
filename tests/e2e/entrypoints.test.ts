@@ -55,8 +55,9 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
         transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: "Bearer e2e-http-token" } } });
       }
       await client.connect(transport);
+      expect(client.getInstructions()).toMatch(/get_my_work/);
       const listed = (await client.listTools()).tools;
-      expect(listed).toHaveLength(mode === "http" ? 20 : 21);
+      expect(listed).toHaveLength(mode === "http" ? 18 : 19);
       const called = new Set<string>();
       const call = async (name: string, args: Record<string, unknown> = {}) => {
         called.add(name);
@@ -104,12 +105,12 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       const calendar = await call("get_calendar", { courseId: 5, start, end, timeZone: "Europe/Berlin" });
       expect(calendar.recurrenceExpanded).toBe(true); expect(calendar.items).toHaveLength(2);
       expect(calendar.items[1]).toMatchObject({ recurrenceId: "r2", startDate: null });
-      expect(JSON.stringify(await call("get_upcoming_due_dates", { courseId: 5 }))).toContain("Matrix deadline");
       expect((await call("get_course_updates", { courseId: 5, since: start })).items).toHaveLength(2);
+      expect((await call("get_my_groups", { course: "Matrix" })).courseId).toBe(5);
       expect((await call("get_my_groups", { courseId: 5 })).items).toMatchObject([{ id: 3, memberCount: 2 }]);
       expect((await call("get_checklists", { courseId: 5 })).items[0].items).toMatchObject([{ id: 4, isCompleted: null }, { id: 5, isCompleted: null }]);
       expect((await call("get_roster", { courseId: 5 })).items).toMatchObject([{ name: "Instructor" }]);
-      expect(await call("get_classlist_emails", { courseId: 5 })).toMatchObject([{ email: "instructor@example.invalid" }]);
+      expect((await call("get_roster", { courseId: 5, includeStudents: true })).items).toContainEqual(expect.objectContaining({ email: "instructor@example.invalid" }));
       expect((await call("get_discussions", { courseId: 5, forumId: 1, topicId: 10, ownOnly: true, unreadOnly: true, maxPagesToScan: 3 })).posts).toHaveLength(1);
       expect((await call("search_course", { courseId: 5, query: "matrix" })).matchedCount).toBeGreaterThan(5);
       expect((await call("search_course", { courseId: 5, query: "page two", sources: ["documents"], documentTopicIds: [101] })).items)
@@ -134,7 +135,7 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
         expect(listed.every(t => t.annotations?.readOnlyHint === true)).toBe(true);
         const beforeDiagnostic = await readFile(requestsPath, "utf8");
         const diagnostic = await promisify(execFile)(process.execPath, [join(root, "build/diagnose.js"), "--http", httpUrl], { cwd: dir, env });
-        expect(JSON.parse(diagnostic.stdout)).toMatchObject({ expectedCount: 20, advertisedCount: 20, missing: [], versionMismatch: false });
+        expect(JSON.parse(diagnostic.stdout)).toMatchObject({ expectedCount: 18, advertisedCount: 18, missing: [], versionMismatch: false });
         expect(await readFile(requestsPath, "utf8")).toBe(beforeDiagnostic);
         const before = await readFile(requestsPath, "utf8");
         expect((await client.callTool({ name: "get_syllabus", arguments: { courseId: 5, downloadPath: downloads } })).isError).toBe(true);

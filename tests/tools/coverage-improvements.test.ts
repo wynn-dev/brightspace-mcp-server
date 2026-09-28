@@ -8,7 +8,6 @@ import { registerGetDiscussions } from "../../src/tools/get-discussions.js";
 import { registerGetSyllabus } from "../../src/tools/get-syllabus.js";
 import { registerGetRoster } from "../../src/tools/get-roster.js";
 import { registerGetMyCourses } from "../../src/tools/get-my-courses.js";
-import { registerGetUpcomingDueDates } from "../../src/tools/get-upcoming-due-dates.js";
 import { registerSearchCourse } from "../../src/tools/search-course.js";
 import { ApiError } from "../../src/api/index.js";
 import { makePdf } from "../fixtures/pdf.js";
@@ -155,13 +154,6 @@ it("uses permitted enrollment dates and explicit semester ancestors when course 
   expect(parse(await captureTool(registerGetMyCourses, api).call({ semester: "autumn", onDate: "2026-09-15" }))).toMatchObject([
     { id: 5, detailStatus: "forbidden", semesterMatch: true, dateMatch: true, semesterSource: "orgunit_ancestor", dateSources: { start: "enrollment" } },
   ]);
-});
-
-it("includes requested reminders without labelling them as deadlines", async () => {
-  const api = fakeApiClient({ "/myEvents/": [{ CalendarEventId: "1", EventType: 1, Title: "Reminder" }, { CalendarEventId: "2", EventType: 2, Title: "Opens" }, { CalendarEventId: "3", EventType: 6, Title: "Due" }] });
-  const r = await captureTool(registerGetUpcomingDueDates, api).call({ courseId: 5, includeReminders: true });
-  expect(parse(r).map((e: any) => e.kind)).toEqual(["reminder", "due_date"]);
-  expect(r.structuredContent?.nextTools).toEqual(["get_my_work", "get_calendar"]);
 });
 
 
