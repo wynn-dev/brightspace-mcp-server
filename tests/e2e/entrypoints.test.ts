@@ -90,7 +90,8 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       await call("check_auth");
       expect(await call("get_my_courses", { includeDetails: true })).toMatchObject([{ id: 5, name: "Matrix methods" }]);
       expect(JSON.stringify(await call("get_my_grades", { courseId: 5 }))).toContain("80%");
-      expect(JSON.stringify(await call("get_announcements", { courseId: 5 }))).toContain("Matrix news");
+      expect(await call("get_announcements", { courseId: 5 })).toMatchObject([
+        { id: 1, title: "Matrix news", attachments: [{ fileId: 32, name: "rooms.html", size: 25 }] }]);
       expect((await call("get_assignments", { courseId: 5 })).assignments).toMatchObject([
         { id: 1, state: "submitted", personalDatesVerified: true }, { id: 2, state: "in_progress", attemptsUsed: 2, bestScore: 8, personalDatesVerified: true },
       ]);
@@ -133,6 +134,14 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       expect(rest.nextCursor).toBeNull();
       expect((await call("read_course_content", { courseId: 5, topicId: 102 })).text).toContain("# Matrix HTML");
       expect((await call("read_course_content", { courseId: 5, topicId: 103 })).text).toBe("Matrix plain text");
+      const brief = await call("read_course_content", { courseId: 5, attachment: { kind: "assignment", folderId: 1, fileId: 30 }, maxChars: 6 });
+      expect(brief).toMatchObject({ title: "Matrix report", filename: "brief.txt", text: "Matrix" });
+      expect(await call("read_course_content", { courseId: 5, attachment: { kind: "assignment", folderId: 1, fileId: 30 }, cursor: brief.nextCursor }))
+        .toMatchObject({ text: " brief text", nextCursor: null });
+      expect(await call("read_course_content", { courseId: 5, attachment: { kind: "feedback", folderId: 1, fileId: 31 } }))
+        .toMatchObject({ attachment: { entityType: "group", entityId: 3 }, text: "Matrix feedback file" });
+      expect((await call("read_course_content", { courseId: 5, attachment: { kind: "announcement", newsItemId: 1, fileId: 32 } })).text)
+        .toBe("Matrix exam rooms");
       expect((await call("get_syllabus", { courseId: 5 })).syllabusText).toContain("Matrix lecture page two");
       expect(await readdir(downloads)).toEqual([]);
       if (mode === "http") {

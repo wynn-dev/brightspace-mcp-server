@@ -58,4 +58,14 @@ describe("get_announcements", () => {
       [10, "Alpha"],
     ]);
   });
+
+  it("lists attachments as fileId/name/size references for read_course_content", async () => {
+    const item = { ...news(1, "2026-09-01T00:00:00Z"), Attachments: [
+      { FileId: 8, FileName: "exam.pdf", Size: 1234 }, { FileId: "9", FileName: "rooms.txt", FileSize: 12 },
+    ] };
+    const { call } = captureTool(registerGetAnnouncements, fakeApiClient({ "/9/news/": [item] }));
+    expect(parse(await call({ courseId: 9 }))[0].attachments).toEqual([
+      { fileId: 8, name: "exam.pdf", size: 1234 }, { fileId: 9, name: "rooms.txt", size: 12 },
+    ]);
+  });
 });

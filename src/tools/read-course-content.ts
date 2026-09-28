@@ -1,32 +1,149 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import type { D2LApiClient } from "../api/index.js";
 import { defineTool } from "./define-tool.js";
 import { ReadCourseContentSchema } from "./schemas.js";
 import { toolResponse, errorResponse } from "./tool-helpers.js";
 import { ContentReadError, contentFilename, decodeContent, readContentBytes, textSliceEnd } from "../utils/content-reader.js";
 import { readPdfPages } from "../utils/pdf-extractor.js";
+import { MAX_FILE_SIZE } from "../utils/file-validator.js";
+import { getSubmissionHistory } from "../services/assignments.js";
+import { object, rows, str, num, id } from "../services/data.js";
 
 const CursorSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   courseId: z.number().int().positive(),
-  topicId: z.number().int().positive(),
+  /** Identity of the selected file (topic or attachment): a cursor only continues that file. */
+  source: z.string().min(1).max(200),
   digest: z.string().regex(/^[a-f0-9]{64}$/),
   page: z.number().int().positive(),
   offset: z.number().int().nonnegative(),
   endPage: z.number().int().positive(),
 }).strict();
 
+type Attachment = NonNullable<z.output<typeof ReadCourseContentSchema>["attachment"]>;
 interface ContentTopic { Title: string; TopicType: number; Url?: string }
+interface ResolvedSource {
+  /** API path of the file stream. */
+  path: string;
+  title: string | null;
+  /** Filename used when the response has no Content-Disposition. */
+  fallbackName: string;
+  sourceUrl: string;
+  /** Identifies the file in the response. */
+  reference: Record<string, unknown>;
+}
+
+/** Validate the file selector and return its cursor identity, before any request. */
+function sourceIdentity(topicId: number | undefined, attachment: Attachment | undefined): string {
+  if ((topicId === undefined) === (attachment === undefined)) {
+    throw new ContentReadError("Provide exactly one of topicId (course content file) or attachment.");
+  }
+  if (!attachment) return `topic:${topicId}`;
+  const { kind, fileId, folderId, newsItemId, entityType, entityId } = attachment;
+  if (kind !== "feedback" && (entityType !== undefined || entityId !== undefined)) {
+    throw new ContentReadError("entityType and entityId only apply to feedback attachments.");
+  }
+  if (kind === "announcement") {
+    if (newsItemId === undefined || folderId !== undefined) {
+      throw new ContentReadError("Announcement attachments need newsItemId (and no folderId).");
+    }
+    return `announcement:${newsItemId}:${fileId}`;
+  }
+  if (folderId === undefined || newsItemId !== undefined) {
+    throw new ContentReadError(`${kind === "assignment" ? "Assignment" : "Feedback"} attachments need folderId (and no newsItemId).`);
+  }
+  // Feedback always resolves to the user's own entity, so folder + file identify it.
+  return `${kind}:${folderId}:${fileId}`;
+}
+
+function checkListedSize(size: number | null) {
+  if (size !== null && size > MAX_FILE_SIZE) {
+    throw new ContentReadError(`File too large. Maximum allowed: ${MAX_FILE_SIZE / 1024 / 1024} MiB.`);
+  }
+}
+
+/**
+ * Resolve the selected file to its API route, rechecking that it is listed where
+ * the model found it. Runs on every call; protected contents are never cached.
+ */
+async function resolveSource(apiClient: D2LApiClient, baseUrl: string, courseId: number,
+  topicId: number | undefined, attachment: Attachment | undefined): Promise<ResolvedSource> {
+  const web = (path: string) => new URL(path, baseUrl).href;
+  if (!attachment) {
+    const topic = await apiClient.get<ContentTopic>(apiClient.le(courseId, `/content/topics/${topicId}`));
+    if (topic.TopicType !== 1) {
+      throw new ContentReadError("This topic is not an uploaded file. External links, videos, and learning-tool activities are not supported.");
+    }
+    return { path: apiClient.le(courseId, `/content/topics/${topicId}/file`), title: topic.Title,
+      fallbackName: topic.Url?.split("?")[0] ?? "document", reference: { topicId },
+      sourceUrl: web(`/d2l/le/content/${courseId}/viewContent/${topicId}/View`) };
+  }
+
+  const { kind, fileId, folderId, newsItemId } = attachment;
+  const listedName = (files: unknown, where: string) => {
+    const file = rows(files).find(f => id(f.FileId) === fileId);
+    if (!file) throw new ContentReadError(`File ${fileId} is not attached to this ${where}. Use a fileId listed by the tool that returned it.`);
+    checkListedSize(num(file.Size) ?? num(file.FileSize));
+    return str(file.FileName) ?? "attachment";
+  };
+
+  if (kind === "assignment") {
+    const folder = object(await apiClient.get<unknown>(apiClient.le(courseId, `/dropbox/folders/${folderId}`)));
+    if (folder.IsHidden === true) throw new ContentReadError("This assignment is hidden.");
+    return { path: apiClient.le(courseId, `/dropbox/folders/${folderId}/attachments/${fileId}`),
+      title: str(folder.Name), fallbackName: listedName(folder.Attachments, "assignment"),
+      reference: { attachment: { kind, folderId, fileId } },
+      sourceUrl: web(`/d2l/lms/dropbox/user/folder_submit_files.d2l?db=${folderId}&ou=${courseId}`) };
+  }
+
+  if (kind === "announcement") {
+    const item = object(await apiClient.get<unknown>(apiClient.le(courseId, `/news/${newsItemId}`)));
+    return { path: apiClient.le(courseId, `/news/${newsItemId}/attachments/${fileId}`),
+      title: str(item.Title), fallbackName: listedName(item.Attachments, "announcement"),
+      reference: { attachment: { kind, newsItemId, fileId } },
+      sourceUrl: web(`/d2l/le/news/${courseId}/${newsItemId}/view`) };
+  }
+
+  // Feedback: only released feedback on the authenticated user's own user/group
+  // entity (from mysubmissions) is eligible; other entities are never requested.
+  const own = await getSubmissionHistory(apiClient, courseId, folderId!);
+  if (own.status !== "available") {
+    throw new ContentReadError(`Your submissions for this assignment are ${own.status}; cannot resolve the feedback file.`);
+  }
+  const wantedType = attachment.entityType?.toLowerCase();
+  const matches = own.feedback.filter(f => f.files.some(file => file.fileId === fileId)
+    && (wantedType === undefined || f.entityType?.toLowerCase() === wantedType)
+    && (attachment.entityId === undefined || f.entityId === attachment.entityId));
+  if (!matches.length) {
+    throw new ContentReadError(`File ${fileId} is not a released feedback file on your own submission for this assignment. Use feedback files listed by get_submission_history.`);
+  }
+  if (matches.length > 1) {
+    throw new ContentReadError("This fileId appears in more than one of your feedback entries; add entityType and entityId.");
+  }
+  const [entry] = matches;
+  const entityType = entry.entityType?.toLowerCase();
+  if ((entityType !== "user" && entityType !== "group") || !entry.entityId) {
+    throw new ContentReadError("Brightspace returned feedback for an unsupported entity type.");
+  }
+  const file = entry.files.find(f => f.fileId === fileId)!;
+  checkListedSize(file.size);
+  return { path: apiClient.le(courseId, `/dropbox/folders/${folderId}/feedback/${entityType}/${entry.entityId}/attachments/${fileId}`),
+    title: null, fallbackName: file.name ?? "feedback",
+    reference: { attachment: { kind, folderId, entityType, entityId: entry.entityId, fileId } },
+    sourceUrl: web(`/d2l/lms/dropbox/user/folder_submit_files.d2l?db=${folderId}&ou=${courseId}`) };
+}
 
 export const registerReadCourseContent = defineTool(
   {
     name: "read_course_content",
     title: "Read Course Content",
-    description: "Read a PDF, HTML, or plain-text course file. Find topicId using get_course_content first. PDF results include physical 1-based page numbers for citations, plus an image of each page by default so scans, diagrams and equations are readable (pageImages: false for text only). Follow nextCursor until null to read more, using the same courseId and topicId and omitting page selection. Reads in memory; no file saves, OCR, external links, or completion updates.",
+    description: "Read a PDF, HTML, or plain-text file: a course content topic (topicId from get_course_content) or an attachment (assignment brief files from get_assignments, instructor feedback files on your own submissions from get_submission_history, announcement files from get_announcements). PDF results include physical 1-based page numbers for citations, plus an image of each page by default so scans, diagrams and equations are readable (pageImages: false for text only). Follow nextCursor until null to read more, using the same courseId and topicId or attachment and omitting page selection. Reads in memory; no file saves, OCR, external links, or completion updates.",
     schema: ReadCourseContentSchema,
   },
-  async ({ courseId, topicId, startPage, endPage, maxChars, cursor, pageImages }, { apiClient, config }) => {
+  async ({ courseId, topicId, attachment, startPage, endPage, maxChars, cursor, pageImages }, { apiClient, config }) => {
     try {
+      const source = sourceIdentity(topicId, attachment);
       if (cursor && (startPage !== undefined || endPage !== undefined)) {
         throw new ContentReadError("Use cursor or page selection, not both.");
       }
@@ -40,18 +157,14 @@ export const registerReadCourseContent = defineTool(
         } catch {
           throw new ContentReadError("Invalid cursor. Use the nextCursor returned by this tool.");
         }
-        if (previous.courseId !== courseId || previous.topicId !== topicId) {
-          throw new ContentReadError("This cursor belongs to a different course or topic.");
+        if (previous.courseId !== courseId || previous.source !== source) {
+          throw new ContentReadError("This cursor belongs to a different course or file.");
         }
       }
 
-      // Recheck access on every call; do not cache protected document contents.
-      const topic = await apiClient.get<ContentTopic>(apiClient.le(courseId, `/content/topics/${topicId}`));
-      if (topic.TopicType !== 1) {
-        throw new ContentReadError("This topic is not an uploaded file. External links, videos, and learning-tool activities are not supported.");
-      }
-      const response = await apiClient.getRaw(apiClient.le(courseId, `/content/topics/${topicId}/file`));
-      const filename = contentFilename(response.headers.get("content-disposition") ?? "", topic.Url?.split("?")[0] ?? "document");
+      const resolved = await resolveSource(apiClient, config.baseUrl, courseId, topicId, attachment);
+      const response = await apiClient.getRaw(resolved.path);
+      const filename = contentFilename(response.headers.get("content-disposition") ?? "", resolved.fallbackName);
       const contentType = response.headers.get("content-type") ?? "";
       const buffer = await readContentBytes(response);
       const digest = createHash("sha256").update(contentType).update("\0").update(filename).update("\0").update(buffer).digest("hex");
@@ -60,12 +173,11 @@ export const registerReadCourseContent = defineTool(
       }
       const decoded = await decodeContent(buffer, contentType, filename);
       const metadata = {
-        courseId, topicId, title: topic.Title, filename,
-        mimeType: decoded.mimeType, format: decoded.format,
-        sourceUrl: new URL(`/d2l/le/content/${courseId}/viewContent/${topicId}/View`, config.baseUrl).href,
+        courseId, ...resolved.reference, title: resolved.title, filename,
+        mimeType: decoded.mimeType, format: decoded.format, sourceUrl: resolved.sourceUrl,
       };
       const makeCursor = (page: number, offset: number, lastPage: number) => Buffer.from(JSON.stringify({
-        version: 1, courseId, topicId, digest, page, offset, endPage: lastPage,
+        version: 2, courseId, source, digest, page, offset, endPage: lastPage,
       })).toString("base64url");
 
       if (decoded.format === "pdf") {

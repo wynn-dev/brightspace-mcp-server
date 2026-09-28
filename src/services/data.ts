@@ -49,3 +49,5 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, in
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
 }
+/** Brightspace File blocks as { fileId, name, size } references readable with read_course_content. */
+export const fileRefs = (value: unknown) => rows(value).map(f => ({ fileId: id(f.FileId), name: str(f.FileName), size: num(f.Size) ?? num(f.FileSize) }));

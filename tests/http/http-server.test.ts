@@ -36,6 +36,7 @@ const apiClient = {
     if (path.includes("/grades/exemptions/")) return { Items: [] };
     if (path.includes("/grades/final/")) return { DisplayedGrade: null };
     if (path.endsWith("/content/toc")) return { Modules: [] };
+    if (/\/news\/\d+$/.test(path)) return { Id: 7, Title: "Exam info", Attachments: [{ FileId: 8, FileName: "exam.pdf", Size: 1000 }] };
     if (path.includes("/courses/")) return { Name: "Course", Description: null };
     if (["/dropbox/", "/quizzes/", "/calendar/", "/checklists/", "/groups/", "/groupcategories/", "/sections/", "/feed/", "/updates/", "/news/", "/grades/", "/discussions/", "/content/myItems/"].some(p => path.includes(p))) return [];
     if (path.includes("/content/topics/")) return { Title: "Lecture notes", TopicType: 1 };
@@ -254,6 +255,23 @@ describe("Streamable HTTP MCP server", () => {
         expect(payload.pages).toEqual([{ page: 2, offset: 0, text: "Lecture two", hasText: true, imageIncluded: true }]);
         expect(result.content).toContainEqual(expect.objectContaining({ type: "image", mimeType: "image/jpeg" }));
         expect(payload.nextCursor).toBeNull();
+        expect(secureDownload).not.toHaveBeenCalled();
+      } finally {
+        await transport.terminateSession();
+        await client.close();
+      }
+    });
+
+    it("reads an announcement attachment in memory over HTTP without saving files", async () => {
+      const { client, transport } = await connect(running);
+      try {
+        const result = await client.callTool({ name: "read_course_content", arguments: {
+          courseId: 3, attachment: { kind: "announcement", newsItemId: 7, fileId: 8 }, pageImages: false } });
+        expect(result.isError).toBeFalsy();
+        const payload = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+        expect(payload).toMatchObject({ attachment: { kind: "announcement", newsItemId: 7, fileId: 8 }, title: "Exam info", format: "pdf" });
+        expect(payload.pages.map((p: { text: string }) => p.text)).toEqual(["Lecture one", "Lecture two"]);
+        expect(apiClient.getRaw).toHaveBeenLastCalledWith("/d2l/api/le/1.0/3/news/7/attachments/8");
         expect(secureDownload).not.toHaveBeenCalled();
       } finally {
         await transport.terminateSession();

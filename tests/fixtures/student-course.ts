@@ -17,14 +17,16 @@ export function studentCourseFixture() {
     Access: { IsActive: true, ClasslistRoleName: "Student" } }] });
   lp("/courses/5", { Name: "Matrix methods", Description: { Text: "Matrix course" }, Semester: { Name: "Autumn" } });
   const folder = { Id: 1, Name: "Matrix report", SubmissionType: 0, DropboxType: 1, GroupTypeId: 2, IsHidden: false,
-    DueDate: date(2), CustomInstructions: { Text: "Solve the matrix" }, Assessment: { ScoreDenominator: 10 }, Availability: {} };
+    DueDate: date(2), CustomInstructions: { Text: "Solve the matrix" }, Assessment: { ScoreDenominator: 10 }, Availability: {},
+    Attachments: [{ FileId: 30, FileName: "brief.txt", Size: 17 }] };
   le("/5/dropbox/folders/", [folder]); le("/5/dropbox/folders/1", folder);
   le("/5/dropbox/folders/1/specialaccess/42", { DueDate: date(2), StartDate: null, EndDate: null });
   le("/5/quizzes/2/specialaccess/42", { DueDate: date(1), StartDate: null, EndDate: null });
   le("/5/dropbox/folders/1/submissions/mysubmissions/", [{ Entity: { EntityId: 3, EntityType: "Group" },
     Submissions: [{ Id: 10, SubmissionDate: date(-2), Files: [{ FileId: 20, FileName: "report.pdf", Size: pdf.length }] },
       { Id: 11, SubmissionDate: date(-1), Files: [] }],
-    Feedback: { IsGraded: true, Score: 8, Feedback: { Text: "Good work" }, RubricAssessments: [{ RubricId: 4 }] } }]);
+    Feedback: { IsGraded: true, Score: 8, Feedback: { Text: "Good work" }, RubricAssessments: [{ RubricId: 4 }],
+      Files: [{ FileId: 31, FileName: "marked.txt", Size: 20 }] } }]);
   le("/5/quizzes/", [{ QuizId: 2, Name: "Matrix quiz", IsActive: true, DueDate: date(1),
     AttemptsAllowed: { IsUnlimited: false, NumberOfAttemptsAllowed: 3 },
     SubmissionTimeLimit: { IsEnforced: true, TimeLimitValue: 30 } }]);
@@ -42,7 +44,9 @@ export function studentCourseFixture() {
   le("/5/grades/categories/", []); le("/5/grades/setup/", { GradingSystem: "Points", IsNullGradeZero: false });
   le("/5/grades/exemptions/42", { Items: [{ GradeObjectId: 1, IsExempt: false, GradeValue: { PointsNumerator: 999 } }] });
   le("/5/grades/final/values/myGradeValue", { DisplayedGrade: "80%", PointsNumerator: 8, PointsDenominator: 10 });
-  le("/5/news/", [{ Id: 1, Title: "Matrix news", Body: { Text: "Read the matrix notes" }, IsPublished: true, CreatedDate: date(-1), LastModifiedDate: date(0) }]);
+  const newsItem = { Id: 1, Title: "Matrix news", Body: { Text: "Read the matrix notes" }, IsPublished: true, CreatedDate: date(-1), LastModifiedDate: date(0),
+    Attachments: [{ FileId: 32, FileName: "rooms.html", Size: 25 }] };
+  le("/5/news/", [newsItem]); le("/5/news/1", newsItem);
   le("/updates/myUpdates/", [{ OrgUnitId: 5, UnreadDiscussionPosts: 1 }]);
   lp("/feed/", [{ Type: "News", Metadata: { OrgUnitId: 5, Date: date(-1) }, Resource: { Id: 1, Title: "Matrix news" } }]);
   const event = { CalendarEventId: "1", OrgUnitId: 5, Title: "Matrix deadline", EventType: 6,
@@ -66,6 +70,9 @@ export function studentCourseFixture() {
   le("/5/overview", { Description: { Text: "Matrix syllabus", Html: "" } });
   file("/overview/attachment", pdf, "application/pdf", "syllabus");
   file("/dropbox/folders/1/submissions/10/files/20/download", pdf, "application/pdf", "report.pdf");
+  file("/dropbox/folders/1/attachments/30", "Matrix brief text", "text/plain", "brief.txt");
+  file("/dropbox/folders/1/feedback/group/3/attachments/31", "Matrix feedback file", "text/plain", "marked.txt");
+  file("/news/1/attachments/32", "<p>Matrix exam rooms</p>", "text/html", "rooms.html");
   lp("/5/groupcategories/", [{ GroupCategoryId: 2, Name: "Project teams" }]);
   lp("/5/groupcategories/2/groups/", [{ GroupId: 3, Name: "Our group", Enrollments: [42, 43] }, { GroupId: 4, Name: "Other group", Enrollments: [99] }]);
   lp("/5/sections/mysections/", [{ SectionId: 1, Name: "Section A" }]);

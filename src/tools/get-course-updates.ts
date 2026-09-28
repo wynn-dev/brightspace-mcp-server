@@ -1,6 +1,6 @@
 import { defineTool } from "./define-tool.js";
 import { UpdatesSchema } from "./workflow-schemas.js";
-import { readList, object, id, str, richText, page, type Row } from "../services/data.js";
+import { readList, object, id, str, richText, page, fileRefs, type Row } from "../services/data.js";
 import { fetchEnrolledCourses } from "./course-helpers.js";
 import { recordLimit } from "../utils/read-status.js";
 import { toolResponse, errorResponse } from "./tool-helpers.js";
@@ -45,7 +45,7 @@ async ({ courseId, since: sinceArg, until: untilArg, offset, limit }, { apiClien
       const modified = str(n.LastModifiedDate) ?? str(n.CreatedDate);
       if (n.IsPublished === false || !modified || Date.parse(modified) < Date.parse(since) || Date.parse(modified) > Date.parse(until)) continue;
       updates.push({ source: "news", courseId: course.id, id: id(n.Id), title: str(n.Title), body: richText(n.Body),
-        createdDate: str(n.CreatedDate), lastModifiedDate: modified, isPinned: n.IsPinned === true, attachments: n.Attachments ?? [] });
+        createdDate: str(n.CreatedDate), lastModifiedDate: modified, isPinned: n.IsPinned === true, attachments: fileRefs(n.Attachments) });
     }
   }
   updates.sort((a, b) => String(b.lastModifiedDate ?? b.date ?? "").localeCompare(String(a.lastModifiedDate ?? a.date ?? "")));

@@ -1,9 +1,8 @@
 import { readSource } from "../utils/read-status.js";
 import type { D2LApiClient } from "../api/index.js";
-import { object, rows, str, num, id, richText, readList, readObject, page, mapLimit, type Row } from "./data.js";
+import { object, rows, str, num, id, richText, readList, readObject, page, mapLimit, fileRefs as files, type Row } from "./data.js";
 import { personalDates, type Dates } from "./personal-dates.js";
 
-const files = (value: unknown) => rows(value).map(f => ({ fileId: id(f.FileId), name: str(f.FileName), size: num(f.Size) }));
 export function mapSubmissionEntities(entities: Row[]) {
   const history = entities.flatMap(e => rows(e.Submissions).map(s => ({
     id: id(s.Id), entityId: id(object(e.Entity).EntityId), entityType: str(object(e.Entity).EntityType),
@@ -14,7 +13,7 @@ export function mapSubmissionEntities(entities: Row[]) {
     const f = object(e.Feedback);
     // Self-submission responses include released feedback; never surface explicitly ungraded drafts.
     if (!Object.keys(f).length || f.IsGraded !== true) return [];
-    return [{ entityId: id(object(e.Entity).EntityId), score: num(f.Score), feedback: richText(f.Feedback),
+    return [{ entityId: id(object(e.Entity).EntityId), entityType: str(object(e.Entity).EntityType), score: num(f.Score), feedback: richText(f.Feedback),
       gradedSymbol: str(f.GradedSymbol), rubricAssessments: rows(f.RubricAssessments), files: files(f.Files),
       links: rows(f.Links).map(l => ({ id: id(l.LinkId), name: str(l.LinkName), url: str(l.Href) })) }];
   });

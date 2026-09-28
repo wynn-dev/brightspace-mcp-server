@@ -64,7 +64,20 @@ export const GetCourseContentSchema = z.object({
 
 export const ReadCourseContentSchema = z.object({
   courseId: z.coerce.number().int().positive().describe("Course ID from get_my_courses."),
-  topicId: z.coerce.number().int().positive().describe("File topic ID from get_course_content."),
+  topicId: z.coerce.number().int().positive().optional()
+    .describe("File topic ID from get_course_content. Use either topicId or attachment."),
+  attachment: z.object({
+    kind: z.enum(["assignment", "feedback", "announcement"])
+      .describe("assignment: brief attachment from get_assignments; feedback: instructor feedback file on your own submission from get_submission_history or get_assignments; announcement: file attached to an announcement from get_announcements."),
+    fileId: z.coerce.number().int().positive().describe("fileId of the attachment."),
+    folderId: z.coerce.number().int().positive().optional().describe("Assignment folderId. Required for assignment and feedback."),
+    newsItemId: z.coerce.number().int().positive().optional().describe("Announcement id. Required for announcement."),
+    entityType: z.string().regex(/^(user|group)$/i).optional()
+      .describe("Feedback only, optional: entityType of your own feedback entry (user or group) to disambiguate."),
+    entityId: z.coerce.number().int().positive().optional()
+      .describe("Feedback only, optional: entityId of your own feedback entry to disambiguate."),
+  }).strict().optional()
+    .describe("Read a file that is not a content topic. Use either topicId or attachment."),
   startPage: z.coerce.number().int().positive().optional()
     .describe("First physical PDF page to read (1-based). PDF only; omit when using cursor."),
   endPage: z.coerce.number().int().positive().optional()
