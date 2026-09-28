@@ -94,6 +94,7 @@ Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/sc
 | `read_course_content` | Read PDF, HTML, or plain-text course files in memory, with PDF page references and continuation |
 | `get_discussions` | Forums/topics or paginated posts, thread, unread, recent and own-author filters; preserves read state |
 | `get_roster` | Paginated classlist with institution role-name selection and explicit access status |
+| `get_briefing` | One-call catch-up: due soon, overdue, new announcements, released grades, unread activity |
 | `get_my_work` | Overdue/upcoming work with explicit completion and source coverage; undated work counted |
 | `get_submission_history` | Individual/group submissions and published feedback/rubrics |
 | `get_course_updates` | On-demand update counts, recent feed and edited news |
@@ -106,7 +107,7 @@ Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/sc
 
 All data tools include a second text block plus `structuredContent.readStatus` with read counts, cache freshness, failed sources and limits. `structuredContent` must carry the full payload (arrays as `items`) because structured-content clients show it instead of the text; `read_course_content` responses with PDF page images omit it so the image blocks stay visible. Check `partial` before interpreting an empty result. Follow `nextOffset` or discussion `nextPage` with unchanged filters. File reading uses its separate content-bound `nextCursor`. Never equate unavailable data with no work, active enrollment with current semester, or null grades with zero.
 
-The HTTP transport exposes 18 tools; stdio adds `download_file`. Course-scoped tools accept `courseId` or `course` (name/code). `get_roster` with `includeStudents` covers classmate emails; `get_my_work` covers due dates. HTTP `get_syllabus` uses a strict schema without `downloadPath`. Read-only tools must use GET-only API methods and must not write files or update read/completion state. Grade scenarios must fail closed when rules, exemptions or pagination completeness cannot be verified.
+The HTTP transport exposes 19 tools; stdio adds `download_file`. Course-scoped tools accept `courseId` or `course` (name/code). `get_roster` with `includeStudents` covers classmate emails; `get_my_work` covers due dates. HTTP `get_syllabus` uses a strict schema without `downloadPath`. Read-only tools must use GET-only API methods and must not write files or update read/completion state. Grade scenarios must fail closed when rules, exemptions or pagination completeness cannot be verified.
 
 ## Codebase map
 

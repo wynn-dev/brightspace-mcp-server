@@ -57,7 +57,7 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       await client.connect(transport);
       expect(client.getInstructions()).toMatch(/get_my_work/);
       const listed = (await client.listTools()).tools;
-      expect(listed).toHaveLength(mode === "http" ? 18 : 19);
+      expect(listed).toHaveLength(mode === "http" ? 19 : 20);
       const called = new Set<string>();
       const call = async (name: string, args: Record<string, unknown> = {}) => {
         called.add(name);
@@ -97,9 +97,13 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       const history = await call("get_submission_history", { courseId: 5, folderId: 1 });
       expect(history.items).toHaveLength(2); expect(history.latestSubmission.id).toBe(11);
       expect(history.feedback[0]).toMatchObject({ score: 8, rubricAssessments: [{ RubricId: 4 }] });
+      const briefing = await call("get_briefing");
+      expect(briefing.announcements.items).toContainEqual(expect.objectContaining({ title: "Matrix news" }));
+      expect(briefing.dueSoon.items.length + briefing.overdue.items.length).toBeGreaterThan(0);
       const work = await call("get_my_work", { courseId: 5 });
       expect(work.items).toContainEqual(expect.objectContaining({ type: "quiz", state: "in_progress" }));
       expect(work.items.some((i: any) => i.type === "assignment")).toBe(false);
+      expect(work.items).toContainEqual(expect.objectContaining({ type: "content", name: "Matrix notes", courseId: 5 }));
       expect((await call("get_grade_summary", { courseId: 5, scenarios: [{ gradeItemId: 1, points: 9 }] })).calculation).toMatchObject({ status: "calculated", percentage: 90 });
       const start = new Date(Date.now() - 7 * 86400000).toISOString(), end = new Date(Date.now() + 7 * 86400000).toISOString();
       const calendar = await call("get_calendar", { courseId: 5, start, end, timeZone: "Europe/Berlin" });
@@ -135,7 +139,7 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
         expect(listed.every(t => t.annotations?.readOnlyHint === true)).toBe(true);
         const beforeDiagnostic = await readFile(requestsPath, "utf8");
         const diagnostic = await promisify(execFile)(process.execPath, [join(root, "build/diagnose.js"), "--http", httpUrl], { cwd: dir, env });
-        expect(JSON.parse(diagnostic.stdout)).toMatchObject({ expectedCount: 18, advertisedCount: 18, missing: [], versionMismatch: false });
+        expect(JSON.parse(diagnostic.stdout)).toMatchObject({ expectedCount: 19, advertisedCount: 19, missing: [], versionMismatch: false });
         expect(await readFile(requestsPath, "utf8")).toBe(beforeDiagnostic);
         const before = await readFile(requestsPath, "utf8");
         expect((await client.callTool({ name: "get_syllabus", arguments: { courseId: 5, downloadPath: downloads } })).isError).toBe(true);

@@ -17,6 +17,10 @@ export const CalendarSchema = z.object({ courseId: courseId.optional(),
 export const WorkSchema = z.object({ courseId: courseId.optional(), daysAhead: z.coerce.number().int().min(1).max(90).default(14),
   daysBehind: z.coerce.number().int().min(0).max(90).default(14), includeCompleted: z.boolean().default(false), includeUndated: z.boolean().default(false),
   includeCalendarContext: z.boolean().default(false), ...paging });
+export const BriefingSchema = z.object({ courseId: courseId.optional(),
+  daysAhead: z.coerce.number().int().min(1).max(30).default(7).describe("Days ahead for due work (default 7)."),
+  since: instant.optional().describe("Announcements and grades after this time (ISO 8601). Defaults to 7 days ago."),
+  limit: z.coerce.number().int().min(1).max(50).default(10).describe("Maximum items per section.") });
 export const SubmissionSchema = z.object({ courseId, folderId: courseId, ...paging });
 export const UpdatesSchema = z.object({ courseId: courseId.optional(),
   since: instant.optional().describe("Only updates after this time (ISO 8601). Defaults to 7 days ago."), until: instant.optional(), ...paging });

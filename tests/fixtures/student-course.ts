@@ -57,6 +57,8 @@ export function studentCourseFixture() {
   le("/5/content/modules/100/structure/", topics);
   le("/5/content/toc", { Modules: [{ ModuleId: 100, Title: "Matrix lectures", Topics: topics }] });
   le("/5/content/myItems/", [{ ItemId: 101, ItemName: "Matrix notes", CompletionType: 2, DateCompleted: null, DueDate: date(1) }]);
+  // Cross-course scheduled content (the fixture ignores the query string).
+  le("/content/myItems/", { Objects: [{ OrgUnitId: 5, ItemId: 101, ItemName: "Matrix notes", CompletionType: 2, DateCompleted: null, DueDate: date(1) }], Next: null });
   for (const topic of topics) le(`/5/content/topics/${topic.Id}`, topic);
   file("/content/topics/101/file", pdf, "application/pdf", "notes.pdf");
   file("/content/topics/102/file", "<h1>Matrix HTML</h1><p>Lesson</p><script>PRIVATE_SECRET</script>", "text/html", "notes.html");
