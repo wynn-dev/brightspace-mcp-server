@@ -106,7 +106,8 @@ export class D2LApiClient {
     const cached = !!options?.ttl && this.cache.has(path);
     const fetchedAt = cached ? this.cache.storedAt(path) : null;
     try {
-      countRead();
+      // Only network reads count toward the per-call budget.
+      if (!cached) countRead();
       const data = await this.getJson<T>(path, options);
       recordRead(path, "available", fetchedAt ?? new Date().toISOString(), cached);
       return data;

@@ -4,213 +4,137 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
-import { DEFAULT_CACHE_TTLS, type D2LApiClient } from "../api/index.js";
+import { DEFAULT_CACHE_TTLS } from "../api/index.js";
 import { GetCourseContentSchema } from "./schemas.js";
 import { defineTool } from "./define-tool.js";
 import { toolResponse } from "./tool-helpers.js";
-import { convertHtmlToMarkdown } from "../utils/html-converter.js";
-import { readList, id, str, num } from "../services/data.js";
+import { readList, rows, id, str, num, richText, type Row } from "../services/data.js";
 import { recordLimit } from "../utils/read-status.js";
 import { log } from "../utils/logger.js";
 
-// D2L Content API response type
-interface ContentObject {
-  Id: number;
-  Title: string;
-  ShortTitle: string | null;
-  Type: number; // 0 = Module, 1 = Topic
-  Description: { Text: string; Html: string } | null;
-  ModuleStartDate: string | null;
-  ModuleEndDate: string | null;
-  ModuleDueDate: string | null;
-  IsHidden: boolean;
-  IsLocked: boolean;
-  LastModifiedDate: string | null;
-  // Module-specific
-  Structure?: ContentObject[];
-  // Topic-specific
-  TopicType?: number; // 1=File, 2=Link/URL, 3=ExternalLink, etc.
-  Url?: string;
-  StartDate?: string | null;
-  EndDate?: string | null;
-  DueDate?: string | null;
-}
-
-// Progress tracking
-interface ContentProgress {
-  ItemId: number;
-  CompletionType: number | null;
-  DateCompleted: string | null;
-}
+/** Outline descriptions are cut to this many characters unless includeDescriptions is set. */
+const SNIPPET_CHARS = 160;
+const MAX_NODES = 2000;
 
 // Output tree — property order here is the JSON order clients see
 interface ModuleNode {
   type: "module";
-  id: number;
+  moduleId: number;
   title: string;
-  description: string | null;
-  dueDate: string | null;
-  isHidden: boolean;
-  isLocked: boolean;
+  description?: string;
+  isHidden?: true;
+  isLocked?: true;
   children: ContentNode[];
 }
 
 interface TopicNode {
-  type: "topic";
-  topicType: string;
-  id: number;
+  /** Topic kind: "file", "link", ... — "module" is reserved for modules. */
+  type: string;
+  topicId: number;
   title: string;
-  isHidden: boolean;
-  isLocked: boolean;
-  dueDate: string | null;
+  dueDate?: string;
   isCompleted: boolean | null;
-  completedDate: string | null;
-  description?: string | null;
-  topicId?: number;
+  completedDate?: string;
+  unread?: true;
+  isHidden?: true;
+  isLocked?: true;
+  description?: string;
   url?: string | null;
-  content?: ReturnType<typeof convertHtmlToMarkdown>;
 }
 
 type ContentNode = ModuleNode | TopicNode;
 
-// Topic type mapping
-const TOPIC_TYPE_MAP: Record<number, string> = {
-  1: "file",
-  2: "link",
-  3: "link", // External link
-};
+interface Progress { dueDate: string | null; completionType: number | null; dateCompleted: string | null }
 
-function matchesTypeFilter(item: ContentObject, filter: string): boolean {
+/** The table of contents names topic kinds; older payloads may carry the numeric TopicType instead. */
+function topicKind(topic: Row): string {
+  const identifier = str(topic.TypeIdentifier)?.toLowerCase();
+  if (identifier) return identifier;
+  return topic.TopicType === 1 ? "file" : topic.TopicType === 2 || topic.TopicType === 3 ? "link" : "other";
+}
+
+function matchesTypeFilter(topic: Row, kind: string, filter: string): boolean {
   switch (filter) {
     case "file":
-      return item.TopicType === 1;
+      return kind === "file";
     case "link":
-      return item.TopicType === 2 || item.TopicType === 3;
+      return kind === "link";
     case "html":
-      return !!item.Description?.Html && item.TopicType !== 1;
+      return !!str((topic.Description as Row | undefined)?.Html) && kind !== "file";
     case "video":
-      return (
-        (item.TopicType === 2 || item.TopicType === 3) &&
-        /youtube|vimeo|kaltura|video/i.test(item.Url ?? "")
-      );
+      return kind === "link" && /youtube|youtu\.be|vimeo|kaltura|video/i.test(str(topic.Url) ?? "");
     default:
       return true;
   }
 }
 
+/** Snippets end in "…" when shortened. */
+function describe(node: { description?: string }, value: unknown, full: boolean) {
+  const text = richText(value).trim();
+  if (!text) return;
+  node.description = full || text.length <= SNIPPET_CHARS ? text : `${text.slice(0, SNIPPET_CHARS).trimEnd()}…`;
+}
+
 /**
- * Recursively build the content tree with progress tracking.
+ * Build the outline from the course table of contents (one request) and join
+ * due dates and completion from the scheduled-content list.
  */
-async function buildContentTree(
-  apiClient: D2LApiClient,
-  courseId: number,
-  modules: ContentObject[],
-  progressMap: Map<number, ContentProgress>,
-  typeFilter: string,
-  maxDepth?: number,
-  currentDepth: number = 0,
-  visited: Set<number> = new Set()
-): Promise<ContentNode[]> {
+function buildTree(
+  modules: Row[], topics: Row[], progress: Map<number, Progress>,
+  options: { typeFilter: string; maxDepth?: number; includeDescriptions: boolean },
+  depth = 0, budget = { nodes: 0 }
+): ContentNode[] {
   const tree: ContentNode[] = [];
-
-  for (const item of modules) {
-    if (item.Type === 0) {
-      if (visited.has(item.Id) || visited.size >= 200) { recordLimit("Content traversal cycle or 200-module limit"); continue; }
-      visited.add(item.Id);
-      // Module — fetch children recursively (unless maxDepth reached)
-      let processedChildren: ContentNode[] = [];
-
-      if (maxDepth === undefined || currentDepth < maxDepth) {
-        let children: ContentObject[] = [];
-        try {
-          children = await apiClient.get<ContentObject[]>(
-            apiClient.le(courseId, `/content/modules/${item.Id}/structure/`),
-            { ttl: DEFAULT_CACHE_TTLS.courseContent }
-          );
-        } catch {
-          log("DEBUG", `Failed to fetch children for module ${item.Id}: skipping`);
-        }
-
-        processedChildren = await buildContentTree(
-          apiClient, courseId, children, progressMap, typeFilter, maxDepth, currentDepth + 1, visited
-        );
-      }
-
-      if (maxDepth !== undefined && currentDepth >= maxDepth) recordLimit("Content depth limited by maxDepth");
+  // Topics and sub-modules interleave in Brightspace's SortOrder.
+  const entries = [...topics.map(row => ({ row, isModule: false })), ...modules.map(row => ({ row, isModule: true }))]
+    .sort((a, b) => (num(a.row.SortOrder) ?? 0) - (num(b.row.SortOrder) ?? 0));
+  for (const { row, isModule } of entries) {
+    if (++budget.nodes > MAX_NODES) { recordLimit(`Content outline capped at ${MAX_NODES} nodes; use moduleTitle`); break; }
+    if (isModule) {
+      const module = row;
+      const children = options.maxDepth === undefined || depth < options.maxDepth
+        ? buildTree(rows(module.Modules), rows(module.Topics), progress, options, depth + 1, budget)
+        : [];
+      if (options.maxDepth !== undefined && depth >= options.maxDepth && (rows(module.Modules).length || rows(module.Topics).length))
+        recordLimit("Content depth limited by maxDepth");
       // Only include module if it has matching children (or filter is 'all')
-      if (typeFilter === "all" || processedChildren.length > 0) {
-        tree.push({
-          type: "module",
-          id: item.Id,
-          title: item.Title,
-          description: item.Description?.Text ?? null,
-          dueDate: item.ModuleDueDate ?? null,
-          isHidden: item.IsHidden,
-          isLocked: item.IsLocked,
-          children: processedChildren,
-        });
-      }
-    } else if (item.Type === 1) {
-      const topicType = TOPIC_TYPE_MAP[item.TopicType ?? 0] ?? "other";
-
-      if (typeFilter !== "all" && !matchesTypeFilter(item, typeFilter)) {
-        continue;
-      }
-
-      const topicProgress = progressMap.get(item.Id);
-
-      const topic: TopicNode = {
-        type: "topic",
-        topicType,
-        id: item.Id,
-        title: item.Title,
-        isHidden: item.IsHidden,
-        isLocked: item.IsLocked,
-        dueDate: item.DueDate ?? null,
-        isCompleted: topicProgress?.DateCompleted ? true : topicProgress && [1, 2].includes(topicProgress.CompletionType ?? -1) ? false : null,
-        completedDate: topicProgress?.DateCompleted ?? null,
-      };
-
-      if (item.TopicType === 1) {
-        // File topic — ID shared by read_course_content and download_file.
-        topic.description = item.Description?.Text ?? null;
-        topic.topicId = item.Id;
-      } else if (item.TopicType === 2 || item.TopicType === 3) {
-        topic.url = item.Url ?? null;
-      }
-
-      // HTML content — include body converted to markdown
-      if (item.Description?.Html) {
-        topic.content = convertHtmlToMarkdown(item.Description.Html);
-      }
-
-      tree.push(topic);
+      if (options.typeFilter !== "all" && children.length === 0) continue;
+      const head: Omit<ModuleNode, "children"> = { type: "module", moduleId: id(module.ModuleId) ?? 0, title: str(module.Title) ?? "" };
+      describe(head, module.Description, options.includeDescriptions);
+      if (module.IsHidden === true) head.isHidden = true;
+      if (module.IsLocked === true) head.isLocked = true;
+      tree.push({ ...head, children });
+      continue;
     }
+    const topic = row, topicId = id(topic.TopicId);
+    if (!topicId) continue;
+    const kind = topicKind(topic);
+    if (options.typeFilter !== "all" && !matchesTypeFilter(topic, kind, options.typeFilter)) continue;
+    const scheduled = progress.get(topicId);
+    const node: TopicNode = {
+      type: kind, topicId, title: str(topic.Title) ?? "",
+      isCompleted: scheduled?.dateCompleted ? true : scheduled && [1, 2].includes(scheduled.completionType ?? -1) ? false : null,
+    };
+    const dueDate = scheduled?.dueDate ?? str(topic.DueDateTime) ?? str(topic.DueDate);
+    if (dueDate) node.dueDate = dueDate;
+    if (scheduled?.dateCompleted) node.completedDate = scheduled.dateCompleted;
+    if (topic.Unread === true) node.unread = true;
+    if (topic.IsHidden === true) node.isHidden = true;
+    if (topic.IsLocked === true) node.isLocked = true;
+    describe(node, topic.Description, options.includeDescriptions);
+    if (kind === "link") node.url = str(topic.Url);
+    tree.push(node);
   }
-
   return tree;
 }
 
-function countTopics(tree: ContentNode[]): number {
-  let count = 0;
+function count(tree: ContentNode[]): { topics: number; modules: number } {
+  let topics = 0, modules = 0;
   for (const item of tree) {
-    if (item.type === "topic") {
-      count++;
-    } else {
-      count += countTopics(item.children);
-    }
+    if (item.type !== "module") topics++;
+    else { const inner = count((item as ModuleNode).children); modules += 1 + inner.modules; topics += inner.topics; }
   }
-  return count;
-}
-
-function countModules(tree: ContentNode[]): number {
-  let count = 0;
-  for (const item of tree) {
-    if (item.type === "module") {
-      count += 1 + countModules(item.children);
-    }
-  }
-  return count;
+  return { topics, modules };
 }
 
 export const registerGetCourseContent = defineTool(
@@ -218,34 +142,30 @@ export const registerGetCourseContent = defineTool(
     name: "get_course_content",
     title: "Get Course Content",
     description:
-      "Fetch the content tree for a course showing modules, topics, files, and links. Use this when the user asks about course materials, lecture slides, uploaded files, content structure, or what's in a course module. Use moduleTitle to filter to a specific module (e.g. 'Labs', 'Staff', 'Homeworks') instead of fetching the entire tree. Use maxDepth to limit recursion depth for a table-of-contents view. To read a PDF, HTML, or plain-text file, call read_course_content with courseId and the file's topicId. Topic descriptions are not the uploaded file body.",
+      "Fetch a compact outline of a course's modules, topics, files, and links with due dates, completion and unread flags. Use this when the user asks about course materials, lecture slides, uploaded files, content structure, or what's in a course module. Use moduleTitle to filter to a specific module (e.g. 'Labs', 'Staff', 'Homeworks') and maxDepth for a table of contents. Nodes are modules (type 'module', moduleId, children) or topics (type 'file', 'link', ...; topicId). Descriptions are shortened to a snippet ending in '…' unless includeDescriptions is true; false flags are omitted. To read a PDF, HTML, or plain-text file, call read_course_content with courseId and the file's topicId. Topic descriptions are not the uploaded file body.",
     schema: GetCourseContentSchema,
   },
-  async ({ courseId, typeFilter = "all", moduleTitle, maxDepth }, { apiClient }) => {
-    let rootModules = await apiClient.get<ContentObject[]>(
-      apiClient.le(courseId, "/content/root/"),
-      { ttl: DEFAULT_CACHE_TTLS.courseContent }
-    );
+  async ({ courseId, typeFilter = "all", moduleTitle, maxDepth, includeDescriptions }, { apiClient }) => {
+    const [toc, scheduled] = await Promise.all([
+      apiClient.get<Row>(apiClient.le(courseId, "/content/toc"), { ttl: DEFAULT_CACHE_TTLS.courseContent }),
+      // Stable scheduled-content API. Unlisted/optional items have unknown completion.
+      readList(apiClient, apiClient.le(courseId, "/content/myItems/")),
+    ]);
 
+    let modules = rows(toc.Modules);
     if (moduleTitle) {
       const searchTerm = moduleTitle.toLowerCase();
-      rootModules = rootModules.filter((m) => m.Title.toLowerCase().includes(searchTerm));
+      modules = modules.filter((m) => (str(m.Title) ?? "").toLowerCase().includes(searchTerm));
     }
 
-    // Stable scheduled-content API. Unlisted/optional items have unknown completion.
-    const scheduled = await readList(apiClient, apiClient.le(courseId, "/content/myItems/"));
-    const progressMap = new Map<number, ContentProgress>();
+    const progress = new Map<number, Progress>();
     for (const p of scheduled.data ?? []) {
       const itemId = id(p.ItemId);
-      if (itemId) progressMap.set(itemId, { ItemId: itemId, CompletionType: num(p.CompletionType), DateCompleted: str(p.DateCompleted) });
+      if (itemId) progress.set(itemId, { dueDate: str(p.DueDate), completionType: num(p.CompletionType), dateCompleted: str(p.DateCompleted) });
     }
 
-    const contentTree = await buildContentTree(
-      apiClient, courseId, rootModules, progressMap, typeFilter, maxDepth
-    );
-
-    const topicCount = countTopics(contentTree);
-    const moduleCount = countModules(contentTree);
+    const contentTree = buildTree(modules, moduleTitle ? [] : rows(toc.Topics), progress, { typeFilter, maxDepth, includeDescriptions });
+    const { topics: topicCount, modules: moduleCount } = count(contentTree);
 
     log("INFO", `get_course_content: Retrieved ${moduleCount} modules and ${topicCount} topics for course ${courseId} (filter: ${typeFilter})`);
 

@@ -16,6 +16,10 @@ describe("assignment reliability and submission history", () => {
     const response = await captureTool(registerGetAssignments, api).call({ courseId: 5 });
     const result = parse(response);
     expect(result.assignments.map((a: any) => [a.id, a.state])).toEqual([[1, "submitted"], [3, "unknown"], [4, "not_submitted"]]);
+    // Summary rows keep submission facts without the histories or instructions.
+    expect(result.assignments[0]).toMatchObject({ submissionCount: 1, lastSubmittedDate: "2026-09-01T00:00:00Z", hasFeedback: false });
+    expect(result.assignments[0]).not.toHaveProperty("submissionHistory");
+    expect(result.assignments[0]).not.toHaveProperty("instructions");
     expect(response.structuredContent?.readStatus).toMatchObject({ partial: true });
     expect(api.requested.some(p => p.includes("myFeedback"))).toBe(false);
   });
@@ -41,9 +45,12 @@ describe("assignment reliability and submission history", () => {
         { AttemptId: 2, UserId: 42, AttemptNumber: 2, Completed: null, IsPublished: false, Score: 9, AttemptFeedback: { Text: "draft" } },
         { AttemptId: 3, UserId: 99, AttemptNumber: 1, IsPublished: true, Score: 100 },
       ] });
-    const r = parse(await captureTool(registerGetAssignments, api).call({ courseId: 5 })).assignments[0];
+    const r = parse(await captureTool(registerGetAssignments, api).call({ courseId: 5, detail: true })).assignments[0];
     expect(r).toMatchObject({ state: "in_progress", timeLimit: 30, instructions: "Instructions", attemptsUsed: 2, attemptsRemaining: null, attemptsRemainingAssumingDefault: 1, bestScore: null });
     expect(r.attempts).toHaveLength(2); expect(r.attempts.every((a: any) => a.score === null)).toBe(true);
+    const summary = parse(await captureTool(registerGetAssignments, api).call({ courseId: 5 })).assignments[0];
+    expect(summary).toEqual({ type: "quiz", id: 1, name: "Quiz", dueDate: null, startDate: null, endDate: null, datesSource: "course_defaults",
+      personalDatesVerified: false, state: "in_progress", gradeItemId: null, attemptsAllowed: 3, attemptsUsed: 2, bestScore: null, timeLimit: 30, attemptStatus: "available" });
     expect(api.requested.some(p => p.endsWith("attempts/?userId=42"))).toBe(true);
   });
   it("pages assignments before fetching details", async () => {

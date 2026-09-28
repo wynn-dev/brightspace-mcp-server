@@ -63,7 +63,8 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
         const response = await client.callTool({ name, arguments: args });
         expect(response.isError, `${name}: ${JSON.stringify(response.content)}`).not.toBe(true);
         const text = (response.content as Array<{ text: string }>)[0].text;
-        expect(text, name).not.toMatch(/PRIVATE_SECRET|UNRELEASED_SECRET|999/);
+        // The fixture hides an unreleased score of 999; ":999" avoids matching timestamp milliseconds.
+        expect(text, name).not.toMatch(/PRIVATE_SECRET|UNRELEASED_SECRET|:999\b/);
         if (name === "check_auth") {
           expect(text).toMatch(/^Authenticated/);
           expect(response.structuredContent).toMatchObject({ authenticated: true, message: text });

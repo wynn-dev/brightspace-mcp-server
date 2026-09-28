@@ -8,8 +8,9 @@ describe("read-status isolation and pagination reliability", () => {
       withReadStatus(async () => { recordRead("a", "available", "2026-09-01T00:00:00Z", true); await readSource("a", async () => 1); return result(); }),
       withReadStatus(async () => { await readSource("b", async () => { throw new ApiError(403, "/b", "sensitive response"); }); return result(); }),
     ]);
-    expect(a.structuredContent?.readStatus).toMatchObject({ partial: false, sources: [{ source: "a", fetchedAt: "2026-09-01T00:00:00Z", cached: true }] });
-    expect(b.structuredContent?.readStatus).toMatchObject({ partial: true, sources: [{ source: "b", status: "forbidden" }] });
+    expect(a.structuredContent?.readStatus).toMatchObject({ partial: false, reads: 1, cachedReads: 1, oldestCachedAt: "2026-09-01T00:00:00Z", failed: [] });
+    expect(b.structuredContent?.readStatus).toMatchObject({ partial: true, reads: 1, failed: [{ source: "b", status: "forbidden" }] });
+    expect(b.structuredContent?.readStatus).not.toHaveProperty("cachedReads");
     expect(JSON.stringify(b)).not.toContain("sensitive response");
   });
   it("keeps already-read pages when a later page fails", async () => {

@@ -45,10 +45,17 @@ describe("calendar and work overview", () => {
         { ItemId: 2, ItemName: "Done", CompletionType: 2, DateCompleted: "2026-09-14T00:00:00Z" },
         { ItemId: 3, ItemName: "Exempt", IsExempt: true }, { ItemId: 4, ItemName: "Unknown", CompletionType: 3 },
       ], "/myEvents/": [event, { ...event, CalendarEventId: "2", EventType: 1, Title: "Reminder" }] });
-    const r = parse(await captureTool(registerGetMyWork, api).call({ courseId: 5 }));
+    const work = captureTool(registerGetMyWork, api);
+    const r = parse(await work.call({ courseId: 5, includeUndated: true, includeCalendarContext: true }));
     expect(r.items.map((x: any) => x.name)).toEqual(["Report", "Deadline", "Unknown"]);
     expect(r.items[0]).toMatchObject({ overdue: null, overdueAssumingCourseDefaults: true, closed: null, state: "unknown" });
+    expect(r.items[0]).not.toHaveProperty("defaultDueDate");
     expect(r.calendarContext.map((x: any) => x.title)).toEqual(["Reminder"]);
+    // Defaults: undated work is counted rather than listed, and calendar context is omitted.
+    const compact = parse(await work.call({ courseId: 5 }));
+    expect(compact.items.map((x: any) => x.name)).toEqual(["Report", "Deadline"]);
+    expect(compact.undatedExcluded).toBe(1);
+    expect(compact).not.toHaveProperty("calendarContext");
   });
 });
 describe("groups, checklists and updates", () => {

@@ -57,11 +57,16 @@ export async function withReadStatus(fn: () => Promise<CallToolResult>): Promise
   return storage.run(trace, async () => {
     const result = await fn();
     const sources = [...trace.sources.values()];
+    const failed = sources.filter((s) => s.status !== "available").map(({ source, status }) => ({ source, status }));
+    const cached = sources.filter((s) => s.cached && s.fetchedAt).map((s) => s.fetchedAt!).sort();
+    // Successful reads are summarized as counts; only failures are listed individually.
     const readStatus = {
       requestedAt: trace.startedAt,
       completedAt: new Date().toISOString(),
-      partial: result.isError === true || sources.some((s) => s.status !== "available") || trace.limits.size > 0,
-      sources,
+      partial: result.isError === true || failed.length > 0 || trace.limits.size > 0,
+      reads: sources.length,
+      ...cached.length ? { cachedReads: cached.length, oldestCachedAt: cached[0] } : {},
+      failed,
       limits: [...trace.limits],
     };
     return {

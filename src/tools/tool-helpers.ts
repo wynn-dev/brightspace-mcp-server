@@ -29,7 +29,8 @@ export function toolResponse(data: unknown): CallToolResult {
     content: [
       {
         type: "text",
-        text: JSON.stringify(data, null, 2),
+        // Compact JSON: indentation costs clients 20-30% more tokens.
+        text: JSON.stringify(data),
       },
     ],
     structuredContent: structuredPayload(data),
