@@ -12,6 +12,7 @@ import { enableStdoutGuard, log } from "./utils/logger.js";
 import { loadEnvFiles } from "./utils/env.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
+import { describeAuthFailure } from "./auth/auth-status.js";
 import { D2LApiClient } from "./api/index.js";
 import { createMcpServer, PKG_VERSION, toolNames } from "./server.js";
 
@@ -54,24 +55,21 @@ if (subcommand === 'setup') {
       const tokenManager = new TokenManager(config.sessionDir);
 
       // Create AuthRunner for auto-reauthentication
-      const authRunner = new AuthRunner();
+      const authRunner = new AuthRunner(config.sessionDir);
 
       // Create D2L API Client with auto-reauth support
       const apiClient = new D2LApiClient({
         baseUrl: config.baseUrl,
         tokenManager,
         onAuthExpired: () => authRunner.run(),
+        describeAuthFailure: () => describeAuthFailure(tokenManager, authRunner),
+        versionCacheDir: config.sessionDir,
       });
 
-      // Initialize API client (discover API versions)
-      try {
-        await apiClient.initialize();
-        log("INFO", "D2L API Client initialized");
-      } catch (error) {
-        log("ERROR", "Failed to initialize D2L API Client", error);
-        log("ERROR", "MCP server cannot start without API initialization. Exiting.");
-        process.exit(1);
-      }
+      // Discover API versions. Never exits: falls back to the last cached
+      // versions and keeps retrying in the background if Brightspace is down.
+      await apiClient.initialize();
+      log("INFO", "D2L API Client initialized");
 
       // Log active course filter config if any filter is set
       if (config.courseFilter.includeCourseIds || config.courseFilter.excludeCourseIds || !config.courseFilter.activeOnly) {

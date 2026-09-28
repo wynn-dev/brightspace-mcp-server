@@ -8,6 +8,7 @@ import type { Page } from "playwright";
 import { BrowserAuthError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
 import { BaseSSOFlow } from "./sso-flow.js";
+import { classifyLoginError, LoginFailedError } from "./login-failure.js";
 
 const SELECTORS = {
   usernameInput: "input#username",
@@ -27,6 +28,7 @@ export class PurdueSSOFlow extends BaseSSOFlow {
    * @returns true on successful login (URL contains /d2l/home), false on timeout/failure
    */
   async login(page: Page): Promise<boolean> {
+    this.lastFailure = null;
     try {
       log("INFO", "Starting Purdue SSO login flow");
 
@@ -49,7 +51,8 @@ export class PurdueSSOFlow extends BaseSSOFlow {
       return true;
     } catch (error) {
       log("ERROR", "SSO login flow failed", error);
-      return false;
+      const { kind, message } = classifyLoginError(error);
+      return this.fail(kind, message);
     }
   }
 
@@ -80,7 +83,9 @@ export class PurdueSSOFlow extends BaseSSOFlow {
       // Wait for either Purdue's username or Albany's userName (or typical email fields)
       // Use a shorter timeout so it falls back to manual login quickly if unrecognized
       const usernameSelector = 'input#username, input#userName, input[type="email"]';
-      await page.waitForSelector(usernameSelector, { timeout: 10000 });
+      await page.waitForSelector(usernameSelector, { timeout: 10000 }).catch((error: Error) => {
+        throw new LoginFailedError("The SSO login form was not found", "credentials_form", "sso_changed", error);
+      });
 
       const { username, password } = this.requireCredentials();
 

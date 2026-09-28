@@ -70,6 +70,20 @@ claude mcp add --transport http brightspace http://your-host:8787/mcp --header "
 
 On a headless host, set `"headless": true` in `~/.brightspace-mcp/config.json` so re-login runs without a display (unattended re-login needs a school without an MFA prompt), install Chromium's system libraries on Linux with `pnpm run playwright:deps`, and keep the port behind a VPN or TLS-terminating proxy — the server itself speaks plain HTTP.
 
+While the HTTP server is in use (a tool call within the last 12 hours), it renews the Brightspace session in the background at about 75% of the token's lifetime, so tool calls don't wait for a browser login. Renewal reuses saved cookies when they are still valid and only submits credentials if it must. After 12 hours without tool calls it stops, and the next call logs in on demand.
+
+`GET /healthz` needs no bearer token and reports only status, timestamps and the kind of the last login failure — no usernames, messages or token data:
+
+```json
+{ "status": "ok", "version": "1.4.0", "startedAt": "…", "sessions": 1,
+  "auth": { "state": "valid", "expiresInMinutes": 42, "lastLogin": { "at": "…", "ok": true, "kind": null },
+            "retriesPaused": false, "nextRetryAt": null } }
+```
+
+`auth.state` is `valid`, `expired` (the next request logs in), or `failing` (automatic logins are paused, or the last login failed and there is no usable token). `failing` returns HTTP 503 with `"status": "degraded"`, so an uptime monitor can alert before the token runs out.
+
+If Brightspace is unreachable at startup (maintenance, or the host booted before the network), both servers still start. They use the API versions cached in the session directory from the last successful start and keep retrying discovery in the background. Without a cache, tools report that Brightspace is unreachable until discovery succeeds.
+
 ## Checking tool discovery
 
 Run `pnpm run diagnose` for the local stdio server, or `pnpm run diagnose --http https://your-host/mcp` for HTTP. The HTTP diagnostic reads `MCP_AUTH_TOKEN` from the environment/configured env files; do not put tokens in command arguments. Omitting the URL uses the first `MCP_ALLOWED_HOSTS` entry over HTTPS, or the local port if no host is configured. The diagnostic initializes MCP and reads `tools/list` without calling Brightspace tools. It reports the running version, expected/advertised tools, and missing names; differences produce a nonzero exit code.
@@ -206,6 +220,17 @@ New service reads use a 60-second in-memory cache and normally cap each source a
 
 When a Brightspace request finds an expired session, it re-authenticates automatically and retries. Concurrent requests wait for the same login attempt. This uses the configured school login flow and stored credentials; required MFA or manual browser steps still need interaction. Run `pnpm run auth` only if automatic login fails. Authentication may refresh local session files; the read-only tools do not modify coursework or save course documents over HTTP.
 
+Session expiry comes from the token itself (Brightspace's `expires_at`, or the token's JWT `exp` claim). `D2L_TOKEN_TTL` is only a fallback. Saved cookies are reused for as long as their own expiry allows, and each restored session is checked against Brightspace before use.
+
+Failed automatic logins trip a circuit breaker, which is shared by every server process through `auth-state.json` in the session directory and survives restarts:
+
+- **Password rejected:** automatic logins stop, so the server can't lock your account by resubmitting bad credentials. They resume when the stored credentials or `config.json` change (for example after `pnpm run setup`), or after a successful manual `pnpm run auth`.
+- **Anything else** (timeout, MFA or other interaction required, unexpected SSO page, crash): retries back off to 1, 5, 15, then 60 minutes.
+
+While the breaker is open, tool calls fail immediately without launching a browser. The error says why and when the next automatic retry happens, e.g. *"Brightspace login failed: username or password rejected. Update credentials on the server (pnpm run setup) — automatic retries paused."* `check_auth` reports the same stored status and does not start a login while retries are paused. A manual `pnpm run auth` always tries.
+
+Only one browser login runs at a time across all processes that share the session directory. They coordinate through a `login.lock` file, which is taken over if its owner died or it is older than 10 minutes. A process waiting on that lock reuses the session the other process saved. A process that gets a 401 re-reads the session file first, so it won't delete a newer session another process just saved.
+
 ## Configuration
 
 Set in `~/.brightspace-mcp/config.json` (written by the wizard), or as environment variables — either in your shell or in a `.env` / `.env.local` file in the project root (copy `.env.example`). Precedence is shell > `.env.local` > `.env` > `config.json`.
@@ -215,8 +240,8 @@ Set in `~/.brightspace-mcp/config.json` (written by the wizard), or as environme
 | `D2L_BASE_URL` | — | Your Brightspace URL; also selects the login flow |
 | `D2L_USERNAME` / `D2L_PASSWORD` | — | Credentials for automated login; omit for a manual browser login |
 | `D2L_HEADLESS` | `false` | Hide the browser during login |
-| `D2L_SESSION_DIR` | `~/.d2l-session` | Where the encrypted token and cookies live |
-| `D2L_TOKEN_TTL` | `3600` | Seconds before a saved session is considered stale |
+| `D2L_SESSION_DIR` | `~/.d2l-session` | Where the encrypted token, cookies, login state (`auth-state.json`) and cached API versions live |
+| `D2L_TOKEN_TTL` | `3600` | Fallback token lifetime in seconds, used only when the token carries no expiry |
 | `D2L_INCLUDE_COURSES` / `D2L_EXCLUDE_COURSES` | — | Comma-separated course IDs to filter |
 | `D2L_ACTIVE_ONLY` | `true` | Hide inactive courses |
 | `D2L_LOG_LEVEL` | `INFO` | Log verbosity on stderr: `DEBUG`, `INFO`, `WARN`, `ERROR` |

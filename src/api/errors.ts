@@ -20,6 +20,14 @@ export class ApiError extends AuthError {
   }
 }
 
+/** 401 after automatic re-login failed; userMessage says why and when it retries. */
+export class AuthUnavailableError extends ApiError {
+  constructor(endpoint: string, public readonly userMessage: string) {
+    super(401, endpoint, userMessage);
+    this.name = "AuthUnavailableError";
+  }
+}
+
 export function isApiError(error: unknown, status?: number): error is ApiError {
   return error instanceof ApiError && (status === undefined || error.status === status);
 }

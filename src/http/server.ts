@@ -37,6 +37,18 @@ interface HttpServerOptions {
   sessionIdleTimeoutMs?: number;
   /** Builds the McpServer backing one session. */
   createServer: () => McpServer;
+  /**
+   * Details for the unauthenticated /healthz endpoint (must not contain
+   * secrets). Unhealthy reports are served as 503. Default: always healthy.
+   */
+  health?: () => Promise<HealthReport>;
+  /** Called for every authorized request that carries a tools/call message. */
+  onToolCall?: () => void;
+}
+
+export interface HealthReport {
+  healthy: boolean;
+  details: Record<string, unknown>;
 }
 
 export interface RunningHttpServer {
@@ -81,6 +93,13 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
   const text = Buffer.concat(chunks).toString("utf-8");
   return text.length === 0 ? undefined : JSON.parse(text);
+}
+
+function isToolCall(body: unknown): boolean {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.some(
+    (m) => typeof m === "object" && m !== null && (m as { method?: unknown }).method === "tools/call"
+  );
 }
 
 function headerValue(req: IncomingMessage, name: string): string | undefined {
@@ -154,7 +173,12 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     const url = new URL(req.url ?? "/", "http://localhost");
 
     if (url.pathname === HEALTH_PATH && req.method === "GET") {
-      sendJson(res, 200, { status: "ok", sessions: sessions.size });
+      const report = options.health ? await options.health() : { healthy: true, details: {} };
+      sendJson(res, report.healthy ? 200 : 503, {
+        status: report.healthy ? "ok" : "degraded",
+        ...report.details,
+        sessions: sessions.size,
+      });
       return;
     }
     if (url.pathname !== MCP_PATH) {
@@ -179,6 +203,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
         sendJson(res, 400, jsonRpcError(-32700, `Parse error: ${(error as Error).message}`));
         return;
       }
+      if (isToolCall(body)) options.onToolCall?.();
 
       if (sessionId) {
         if (!existing) {

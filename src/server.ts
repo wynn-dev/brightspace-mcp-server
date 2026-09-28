@@ -12,6 +12,7 @@ import type { D2LApiClient } from "./api/index.js";
 import type { TokenManager, AuthRunner } from "./auth/index.js";
 import type { AppConfig } from "./types/index.js";
 import { log } from "./utils/logger.js";
+import { authFailureMessage, publicAuthStatus, readAuthStatus } from "./auth/auth-status.js";
 import {
   registerGetCalendar,
   registerGetSubmissionHistory,
@@ -83,7 +84,7 @@ export const SERVER_INSTRUCTIONS = [
 interface McpServerDeps {
   apiClient: D2LApiClient;
   tokenManager: Pick<TokenManager, "getToken">;
-  authRunner: Pick<AuthRunner, "run">;
+  authRunner: Pick<AuthRunner, "run" | "status">;
   config: AppConfig;
   version?: string;
   /**
@@ -126,7 +127,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     {
       title: "Check Authentication Status",
       description:
-        "Check if you are authenticated with Brightspace. " +
+        "Check if you are authenticated with Brightspace, and why automatic login is failing if it is. " +
         "Run `pnpm run auth` first to authenticate. " +
         "Use this when the user asks if they're logged in, if authentication is working, " +
         "or when other tools return auth errors.",
@@ -138,22 +139,21 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       let token = await tokenManager.getToken();
 
       if (!token) {
-        log("INFO", "check_auth: No valid token, attempting auto-reauthentication...");
-
-        const success = await authRunner.run();
-        if (success) {
-          token = await tokenManager.getToken();
+        // While automatic logins are paused, report why instead of launching
+        // a login that the breaker would refuse (or that fails the same way).
+        if ((await authRunner.status()).open) {
+          log("INFO", "check_auth: No valid token and automatic login is paused");
+        } else {
+          log("INFO", "check_auth: No valid token, attempting auto-reauthentication...");
+          if (await authRunner.run()) token = await tokenManager.getToken();
         }
 
         if (!token) {
-          log("INFO", "check_auth: Auto-reauthentication failed or produced no valid token");
-
-          const message =
-            "Not authenticated. Auto-reauthentication was attempted but failed. " +
-            "Please run `pnpm run auth` in the project directory to log in. " +
-            "Make sure your stored credentials are correct and your internet connection is stable.";
+          log("INFO", "check_auth: No valid token after checking automatic login");
+          const status = await readAuthStatus(tokenManager, authRunner);
+          const message = `Not authenticated. ${authFailureMessage(status)}`;
           return {
-            structuredContent: { authenticated: false, message, ...discovery },
+            structuredContent: { authenticated: false, message, auth: publicAuthStatus(status), ...discovery },
             content: [{ type: "text", text: message }],
           };
         }
@@ -164,9 +164,12 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       const expiresIn = Math.round((token.expiresAt - Date.now()) / 1000 / 60);
       log("INFO", `check_auth: Token valid, expires in ~${expiresIn} minutes`);
 
-      const message = `Authenticated with Brightspace. Token expires in ~${expiresIn} minutes. Source: ${token.source}.`;
+      const status = await readAuthStatus(tokenManager, authRunner);
+      // The token still works, but warn early if the last (background) login failed
+      const warning = status.lastLogin && !status.lastLogin.ok ? ` Warning: ${authFailureMessage(status)}` : "";
+      const message = `Authenticated with Brightspace. Token expires in ~${expiresIn} minutes. Source: ${token.source}.${warning}`;
       return {
-        structuredContent: { authenticated: true, message, expiresInMinutes: expiresIn, source: token.source, ...discovery },
+        structuredContent: { authenticated: true, message, expiresInMinutes: expiresIn, source: token.source, auth: publicAuthStatus(status), ...discovery },
         content: [{ type: "text", text: message }],
       };
     }

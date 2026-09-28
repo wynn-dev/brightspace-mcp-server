@@ -7,6 +7,7 @@
 import type { Page } from "playwright";
 import { BrowserAuthError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
+import { LoginFailedError, type LoginFailureKind } from "./login-failure.js";
 
 const MANUAL_LOGIN_TIMEOUT_MS = 300000;
 
@@ -20,11 +21,17 @@ export interface SSOCredentials {
  * configured username/password. BrowserAuth treats this as fatal and skips the
  * manual-login fallback: waiting for the user can't fix a wrong stored password.
  */
-export class CredentialsRejectedError extends BrowserAuthError {
+export class CredentialsRejectedError extends LoginFailedError {
   constructor(message: string) {
-    super(message, "credentials");
+    super(message, "credentials", "credentials");
     this.name = "CredentialsRejectedError";
   }
+}
+
+/** Why login() last returned false; BrowserAuth reports it when it can't fall back to manual login. */
+export interface SSOFailure {
+  kind: LoginFailureKind;
+  detail: string;
 }
 
 /**
@@ -38,6 +45,9 @@ export interface SSOFlow {
 
   /** True if credentials are available for automated login. */
   hasCredentials(): boolean;
+
+  /** Set when login() returns false, so a headless failure can say why. */
+  readonly lastFailure?: SSOFailure | null;
 
   /**
    * Automated login. The page has already been redirected away from /d2l/home.
@@ -57,6 +67,7 @@ export interface SSOFlow {
 export abstract class BaseSSOFlow implements SSOFlow {
   abstract readonly loginHint: string;
   protected readonly credentials: SSOCredentials;
+  lastFailure: SSOFailure | null = null;
 
   constructor(credentials: SSOCredentials) {
     this.credentials = credentials;
@@ -67,6 +78,12 @@ export abstract class BaseSSOFlow implements SSOFlow {
   }
 
   abstract login(page: Page): Promise<boolean>;
+
+  /** Record why login() is about to return false. */
+  protected fail(kind: LoginFailureKind, detail: string): false {
+    this.lastFailure = { kind, detail };
+    return false;
+  }
 
   async manualLogin(page: Page): Promise<boolean> {
     try {

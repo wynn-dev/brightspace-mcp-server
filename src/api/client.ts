@@ -7,12 +7,19 @@
 import type { D2LApiClientOptions, ApiVersions, TokenData } from "./types.js";
 import { TTLCache } from "./cache.js";
 import { TokenBucket } from "./rate-limiter.js";
-import { discoverVersions } from "./version-discovery.js";
-import { ApiError, RateLimitError, NetworkError } from "./errors.js";
+import { discoverVersions, readCachedVersions, writeCachedVersions } from "./version-discovery.js";
+import { ApiError, AuthUnavailableError, RateLimitError, NetworkError } from "./errors.js";
 import { log } from "../utils/logger.js";
 import { recordRead, errorState, countRead } from "../utils/read-status.js";
 
 const MAX_RETRY_AFTER_SECONDS = 10;
+
+/** Waits between version-discovery attempts during startup (kept short: stdio clients are waiting). */
+const STARTUP_DISCOVERY_RETRY_MS = [1000, 3000];
+/** Background re-discovery backoff after startup discovery failed. */
+const REDISCOVERY_BACKOFF_MS = [30_000, 60_000, 120_000, 300_000];
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * D2L API client with authentication, caching, rate limiting, and version discovery.
@@ -33,7 +40,12 @@ export class D2LApiClient {
   private readonly rateLimiter: TokenBucket;
   private readonly timeoutMs: number;
   private readonly onAuthExpired?: () => Promise<boolean>;
+  private readonly describeAuthFailure?: () => Promise<string | null>;
+  private readonly versionCacheDir?: string;
   private versions: ApiVersions | null = null;
+  /** Startup discovery failed; requests report Brightspace as unreachable until it succeeds. */
+  private discoveryFailed = false;
+  private rediscoveryTimer: NodeJS.Timeout | null = null;
   private authRecovery: Promise<TokenData> | null = null;
 
   constructor(options: D2LApiClientOptions) {
@@ -50,7 +62,8 @@ export class D2LApiClient {
     this.tokenManager = options.tokenManager;
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.onAuthExpired = options.onAuthExpired;
-
+    this.describeAuthFailure = options.describeAuthFailure;
+    this.versionCacheDir = options.versionCacheDir;
 
     // Initialize cache and rate limiter
     this.cache = new TTLCache();
@@ -71,21 +84,80 @@ export class D2LApiClient {
   /**
    * Initialize the client by discovering API versions.
    * Must be called before making API requests.
+   *
+   * Never throws: if Brightspace is unreachable (maintenance, no network yet)
+   * after a few quick retries, the last versions cached in versionCacheDir
+   * are used, and discovery keeps retrying in the background. Without a cache,
+   * requests fail with a NetworkError until discovery succeeds.
    */
   async initialize(): Promise<void> {
-    this.versions = await discoverVersions(this.baseUrl, this.timeoutMs);
+    try {
+      await this.discover(STARTUP_DISCOVERY_RETRY_MS);
+    } catch (error) {
+      this.discoveryFailed = true;
+      const cached = this.versionCacheDir
+        ? await readCachedVersions(this.versionCacheDir, this.baseUrl)
+        : null;
+      if (cached) {
+        this.versions = cached;
+        log("WARN", `API version discovery failed — using last known versions LP ${cached.lp}, LE ${cached.le}`, error);
+      } else {
+        log("ERROR", "API version discovery failed and no cached versions exist — Brightspace requests will fail until it succeeds", error);
+      }
+      this.scheduleRediscovery(0);
+    }
+  }
+
+  /** Discover versions (retrying after each delay), then cache them. */
+  private async discover(retryDelaysMs: number[]): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        this.versions = await discoverVersions(this.baseUrl, this.timeoutMs);
+        break;
+      } catch (error) {
+        if (attempt >= retryDelaysMs.length) throw error;
+        log("WARN", `API version discovery failed; retrying in ${retryDelaysMs[attempt] / 1000}s`);
+        await sleep(retryDelaysMs[attempt]);
+      }
+    }
+    this.discoveryFailed = false;
     log(
       "INFO",
       `D2L API versions discovered: LP ${this.versions.lp}, LE ${this.versions.le}`,
     );
+    if (this.versionCacheDir) await writeCachedVersions(this.versionCacheDir, this.baseUrl, this.versions);
+  }
+
+  private scheduleRediscovery(failures: number): void {
+    const delay = REDISCOVERY_BACKOFF_MS[Math.min(failures, REDISCOVERY_BACKOFF_MS.length - 1)];
+    this.rediscoveryTimer = setTimeout(() => {
+      this.rediscoveryTimer = null;
+      this.discover([]).catch((error) => {
+        log("DEBUG", "Background API version discovery failed", error);
+        this.scheduleRediscovery(failures + 1);
+      });
+    }, delay);
+    this.rediscoveryTimer.unref();
+  }
+
+  /** Stop background work (version re-discovery). */
+  dispose(): void {
+    if (this.rediscoveryTimer) clearTimeout(this.rediscoveryTimer);
+    this.rediscoveryTimer = null;
   }
 
   /**
    * Get discovered API versions.
    * @throws Error if initialize() hasn't been called yet
+   * @throws NetworkError if discovery failed and no versions were cached
    */
   get apiVersions(): ApiVersions {
     if (!this.versions) {
+      if (this.discoveryFailed) {
+        throw new NetworkError(
+          "Brightspace API versions are not known yet (discovery failed; retrying in the background)",
+        );
+      }
       throw new Error(
         "API client not initialized. Call initialize() before accessing apiVersions.",
       );
@@ -198,7 +270,12 @@ export class D2LApiClient {
     this.authRecovery = (async () => {
       const current = await this.tokenManager.getToken();
       if (current && current.accessToken !== rejected?.accessToken) return current;
-      if (rejected) await this.tokenManager.clearToken();
+      if (rejected) {
+        // Clears only the rejected token; another process may have saved a newer one
+        await this.tokenManager.clearToken(rejected);
+        const newer = await this.tokenManager.getToken();
+        if (newer && newer.accessToken !== rejected.accessToken) return newer;
+      }
       if (!allowLogin) throw new ApiError(401, path, "Refreshed session was rejected.");
       return this.tryAutoReauth(path);
     })().finally(() => { this.authRecovery = null; });
@@ -222,6 +299,8 @@ export class D2LApiClient {
       }
       log("WARN", "Auto-reauthentication did not produce a valid token");
     }
+    const reason = await this.describeAuthFailure?.().catch(() => null);
+    if (reason) throw new AuthUnavailableError(path, reason);
     throw new ApiError(401, path, "Session expired. Please re-authenticate with `pnpm run auth`.");
   }
 

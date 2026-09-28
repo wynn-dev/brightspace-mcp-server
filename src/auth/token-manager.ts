@@ -17,9 +17,15 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * TokenManager manages token lifecycle with in-memory caching and disk persistence.
  * Handles expiry detection with a configurable refresh buffer.
+ *
+ * Several processes (stdio servers, the HTTP server, `pnpm run auth`) share
+ * one session file, so the memory cache is keyed by the file's mtime+size:
+ * a session written by another process is picked up on the next read.
  */
 export class TokenManager {
   private cachedToken: TokenData | null = null;
+  /** fileStamp() of the session file the cache reflects; undefined = unknown. */
+  private cachedStamp: string | null | undefined = undefined;
   private readonly sessionStore: SessionStore;
 
   constructor(sessionDir?: string) {
@@ -28,26 +34,29 @@ export class TokenManager {
 
   /**
    * Get the current token if valid, otherwise null.
-   * Checks memory cache first, then loads from disk if needed.
+   * Uses the memory cache unless the session file changed on disk.
    * Returns null if token is expired or within refresh buffer.
    */
   async getToken(): Promise<TokenData | null> {
-    // Check memory cache first
-    if (this.cachedToken && this.isValid(this.cachedToken)) {
+    const token = await this.current();
+    if (token && this.isValid(token)) {
       log("DEBUG", "Returning cached token");
-      return this.cachedToken;
-    }
-
-    // Try loading from disk
-    const storedToken = await this.sessionStore.load();
-    if (storedToken && this.isValid(storedToken)) {
-      log("DEBUG", "Loaded valid token from session store");
-      this.cachedToken = storedToken;
-      return storedToken;
+      return token;
     }
 
     log("DEBUG", "No valid token available");
     return null;
+  }
+
+  /** The newest known token, reloading from disk if another process replaced it. */
+  private async current(): Promise<TokenData | null> {
+    const stamp = await this.sessionStore.fileStamp();
+    if (stamp !== this.cachedStamp) {
+      this.cachedToken = stamp === null ? null : await this.sessionStore.load();
+      this.cachedStamp = stamp;
+      if (this.cachedToken) log("DEBUG", "Loaded token from session store");
+    }
+    return this.cachedToken;
   }
 
   /**
@@ -56,15 +65,29 @@ export class TokenManager {
   async setToken(token: TokenData): Promise<void> {
     this.cachedToken = token;
     await this.sessionStore.save(token);
+    this.cachedStamp = await this.sessionStore.fileStamp();
     log("DEBUG", "Token cached and persisted");
   }
 
   /**
    * Clear the token from memory and disk.
+   *
+   * Pass the token Brightspace rejected to clear only that token: if another
+   * process already saved a newer session, it is kept (and used from now on)
+   * instead of being deleted.
    */
-  async clearToken(): Promise<void> {
+  async clearToken(rejected?: TokenData): Promise<void> {
+    if (rejected) {
+      const onDisk = await this.sessionStore.load();
+      if (onDisk && onDisk.accessToken !== rejected.accessToken) {
+        log("INFO", "Session on disk is newer than the rejected token — keeping it");
+        this.cachedStamp = undefined;
+        return;
+      }
+    }
     this.cachedToken = null;
     await this.sessionStore.clear();
+    this.cachedStamp = null;
     log("DEBUG", "Token cleared from memory and disk");
   }
 

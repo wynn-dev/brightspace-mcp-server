@@ -6,8 +6,10 @@
 
 import * as path from "node:path";
 import * as os from "node:os";
+import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import type { AppConfig, LogLevel } from "../types/index.js";
-import { configStoreExists, loadConfigStore } from "./config-store.js";
+import { configStoreExists, getConfigStorePath, loadConfigStore, type ConfigStoreData } from "./config-store.js";
 import { setLogLevel } from "./logger.js";
 
 const LOG_LEVELS: LogLevel[] = ["DEBUG", "INFO", "WARN", "ERROR"];
@@ -66,18 +68,56 @@ export function loadConfig(): AppConfig {
   }
 
   return {
-    baseUrl: process.env.D2L_BASE_URL || store?.baseUrl || "https://purdue.brightspace.com",
+    ...resolveLogin(store),
     sessionDir,
     tokenTtl,
     headless,
-    username: process.env.D2L_USERNAME || store?.username,
-    password: process.env.D2L_PASSWORD || store?.password,
     courseFilter: {
       includeCourseIds,
       excludeCourseIds,
       activeOnly,
     },
   };
+}
+
+/** Login target and credentials: env > config store > default. */
+function resolveLogin(store: ConfigStoreData | null): Pick<AppConfig, "baseUrl" | "username" | "password"> {
+  return {
+    baseUrl: process.env.D2L_BASE_URL || store?.baseUrl || "https://purdue.brightspace.com",
+    username: process.env.D2L_USERNAME || store?.username,
+    password: process.env.D2L_PASSWORD || store?.password,
+  };
+}
+
+export interface CredentialSnapshot {
+  /** One-way digest of baseUrl + username + password; changes when any of them does. */
+  fingerprint: string;
+  /** mtime of ~/.brightspace-mcp/config.json, if it exists. */
+  configMtimeMs?: number;
+}
+
+/**
+ * Re-read the credentials a login would use right now (without the logging
+ * and side effects of loadConfig), so a long-running server notices when
+ * `pnpm run setup` stored new ones.
+ */
+export function readCredentialSnapshot(): CredentialSnapshot {
+  let store: ConfigStoreData | null = null;
+  let configMtimeMs: number | undefined;
+  try {
+    if (configStoreExists()) {
+      configMtimeMs = statSync(getConfigStorePath()).mtimeMs;
+      store = loadConfigStore();
+    }
+  } catch {
+    // Unreadable config: fall back to the environment alone
+  }
+  const { baseUrl, username, password } = resolveLogin(store);
+  const fingerprint = createHash("sha256")
+    .update(["brightspace-mcp-login", baseUrl, username ?? "", password ?? ""].join("\0"))
+    .digest("hex")
+    .slice(0, 16);
+  return { fingerprint, configMtimeMs };
 }
 
 function expandTilde(filePath: string): string {

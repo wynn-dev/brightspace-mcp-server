@@ -4,9 +4,37 @@
  * Licensed under MIT — see LICENSE file for details.
  */
 
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { ApiVersions } from "./types.js";
 import { NetworkError } from "./errors.js";
 import { log } from "../utils/logger.js";
+
+const VERSION_CACHE_FILE = "api-versions.json";
+
+/** Last successfully discovered versions for baseUrl, from `dir`; null if none. */
+export async function readCachedVersions(dir: string, baseUrl: string): Promise<ApiVersions | null> {
+  try {
+    const cached = JSON.parse(await fs.readFile(path.join(dir, VERSION_CACHE_FILE), "utf-8"));
+    if (cached?.baseUrl !== baseUrl || typeof cached.lp !== "string" || typeof cached.le !== "string") return null;
+    return { lp: cached.lp, le: cached.le };
+  } catch {
+    return null;
+  }
+}
+
+/** Remember discovered versions so a later start can survive a discovery outage. */
+export async function writeCachedVersions(dir: string, baseUrl: string, versions: ApiVersions): Promise<void> {
+  try {
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    const file = path.join(dir, VERSION_CACHE_FILE);
+    const tmp = `${file}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify({ baseUrl, ...versions, discoveredAt: new Date().toISOString() }), { mode: 0o600 });
+    await fs.rename(tmp, file);
+  } catch (error) {
+    log("DEBUG", "Could not cache API versions", error);
+  }
+}
 
 interface D2LVersionEntry {
   ProductCode: string;

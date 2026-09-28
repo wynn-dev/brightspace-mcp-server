@@ -126,11 +126,14 @@ export class SessionStore {
         expiresAt: token.expiresAt,
       };
 
+      // Write-then-rename so other processes never read a half-written file
+      const tmpPath = `${this.sessionFilePath}.${process.pid}.tmp`;
       await fs.writeFile(
-        this.sessionFilePath,
+        tmpPath,
         JSON.stringify(sessionFile, null, 2),
         { encoding: "utf-8", mode: 0o600 }
       );
+      await fs.rename(tmpPath, this.sessionFilePath);
 
       log("DEBUG", `Session saved to ${this.sessionFilePath}`);
     } catch (error) {
@@ -170,6 +173,19 @@ export class SessionStore {
         error instanceof Error ? error : new Error(String(error));
       log("WARN", `Failed to load session: ${err.message}`);
       // Return null instead of throwing - graceful degradation
+      return null;
+    }
+  }
+
+  /**
+   * Cheap change detector for the session file (mtime + size), or null if
+   * there is none. Lets a process notice a session another process wrote.
+   */
+  async fileStamp(): Promise<string | null> {
+    try {
+      const stat = await fs.stat(this.sessionFilePath);
+      return `${stat.mtimeMs}:${stat.size}`;
+    } catch {
       return null;
     }
   }

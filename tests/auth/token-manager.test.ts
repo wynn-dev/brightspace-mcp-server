@@ -216,4 +216,37 @@ describe("TokenManager", () => {
       expect(needsRefresh).toBe(false);
     });
   });
+
+  describe("multiple processes sharing the session dir", () => {
+    const make = (accessToken: string): TokenData => ({
+      accessToken,
+      capturedAt: Date.now(),
+      expiresAt: Date.now() + 3600000,
+      source: "browser",
+    });
+
+    it("picks up a session another process saved, even while its own token is still valid", async () => {
+      await tokenManager.setToken(make("mine"));
+      await new TokenManager(testDir).setToken(make("theirs-and-longer"));
+      expect((await tokenManager.getToken())?.accessToken).toBe("theirs-and-longer");
+    });
+
+    it("clearToken(rejected) keeps a newer session another process wrote", async () => {
+      const rejected = make("rejected");
+      await tokenManager.setToken(rejected);
+      await new TokenManager(testDir).setToken(make("newer"));
+
+      await tokenManager.clearToken(rejected);
+
+      expect((await new TokenManager(testDir).getToken())?.accessToken).toBe("newer");
+      expect((await tokenManager.getToken())?.accessToken).toBe("newer");
+    });
+
+    it("clearToken(rejected) deletes the session when it is the rejected one", async () => {
+      const rejected = make("rejected");
+      await tokenManager.setToken(rejected);
+      await tokenManager.clearToken(rejected);
+      expect(await new TokenManager(testDir).getToken()).toBeNull();
+    });
+  });
 });
