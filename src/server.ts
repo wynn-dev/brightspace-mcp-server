@@ -16,6 +16,7 @@ import {
   registerGetCalendar,
   registerGetSubmissionHistory,
   registerGetMyWork,
+  registerGetBriefing,
   registerGetCourseUpdates,
   registerGetMyGroups,
   registerGetChecklists,
@@ -45,6 +46,7 @@ export const PKG_VERSION = (() => {
 })();
 
 const COMMON_TOOLS = [
+  registerGetBriefing,
   registerGetCalendar,
   registerGetSubmissionHistory,
   registerGetMyWork,
@@ -69,7 +71,7 @@ export function toolNames(includeDownloadFile = false): string[] {
 /** Sent to clients at initialization: which tool answers which student question. */
 export const SERVER_INSTRUCTIONS = [
   "Read-only access to the user's D2L Brightspace courses. Course-scoped tools accept courseId or course (a course name or code).",
-  "Routing: what's due, overdue or to do this week -> get_my_work. Calendar events, reminders, availability windows -> get_calendar.",
+  "Routing: catch me up / what's up / daily or weekly summary -> get_briefing. What's due, overdue or to do this week -> get_my_work. Calendar events, reminders, availability windows -> get_calendar.",
   "Grades and final grade -> get_my_grades; how the grade is calculated or what-if scores -> get_grade_summary.",
   "Assignment details, rubrics, feedback -> get_assignments (detail) and get_submission_history.",
   "What's new or missed -> get_course_updates; announcements -> get_announcements.",

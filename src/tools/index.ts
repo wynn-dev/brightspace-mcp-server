@@ -26,6 +26,7 @@ export * from "./schemas.js";
 export { registerGetCalendar } from "./get-calendar.js";
 export { registerGetSubmissionHistory } from "./get-submission-history.js";
 export { registerGetMyWork } from "./get-my-work.js";
+export { registerGetBriefing } from "./get-briefing.js";
 export { registerGetCourseUpdates } from "./get-course-updates.js";
 export { registerGetMyGroups } from "./get-my-groups.js";
 export { registerGetChecklists } from "./get-checklists.js";
