@@ -91,7 +91,7 @@ Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/sc
 | `get_announcements` | Recent course announcements, with attachment references readable via `read_course_content` |
 | `get_syllabus` | Syllabus text for a course; optional attachment saves are stdio only |
 | `get_course_content` | Compact module/topic outline (one TOC request) with course and top-level module `progress`; full descriptions on request |
-| `read_course_content` | Read PDF, HTML, or plain-text course files in memory (content topics, or `attachment` for assignment briefs, your own feedback files and announcement files), with PDF page references and continuation |
+| `read_course_content` | Read PDF, HTML, plain-text or image course files in memory (content topics, or `attachment` for assignment briefs, your own feedback files and announcement files), with PDF page references and continuation |
 | `get_discussions` | Forums/topics or paginated posts, thread, unread, recent and own-author filters; preserves read state |
 | `get_roster` | Paginated classlist with institution role-name selection and explicit access status |
 | `get_briefing` | One-call catch-up: due soon, overdue, new announcements, released grades, unread activity |
