@@ -4,6 +4,7 @@ import { registerReadCourseContent } from "../../src/tools/read-course-content.j
 import { captureTool, fakeApiClient, parse, text } from "./helpers.js";
 import { makePdf } from "../fixtures/pdf.js";
 import { secureDownload } from "../../src/utils/download-helpers.js";
+import { createCanvas } from "@napi-rs/canvas";
 
 vi.mock("../../src/utils/download-helpers.js", () => ({ secureDownload: vi.fn() }));
 
@@ -35,6 +36,16 @@ describe("read_course_content", () => {
     expect(result.sourceUrl).toBe("https://brightspace.example.edu/d2l/le/content/3/viewContent/10/View");
     expect(api.getRaw).toHaveBeenCalledWith("/d2l/api/le/1.0/3/content/topics/10/file");
     expect(secureDownload).not.toHaveBeenCalled();
+  });
+
+  it("returns image files as an image block without structured content", async () => {
+    const png = await createCanvas(40, 20).encode("png");
+    const { call } = reader(png, "image/png", "diagram.png");
+    const response = await call({ courseId: 3, topicId: 10 });
+    expect(parse(response)).toMatchObject({ filename: "diagram.png", format: "image", mimeType: "image/png", width: 40, height: 20, resized: false, nextCursor: null });
+    expect(response.content).toContainEqual({ type: "image", mimeType: "image/png", data: png.toString("base64") });
+    expect(response.structuredContent).toBeUndefined();
+    expect(text(await call({ courseId: 3, topicId: 10, startPage: 1 }))).toMatch(/only available for PDF and text/);
   });
 
   it("continues within and across PDF pages without losing text", async () => {

@@ -6,6 +6,7 @@ import { ReadCourseContentSchema } from "./schemas.js";
 import { toolResponse, errorResponse } from "./tool-helpers.js";
 import { ContentReadError, contentFilename, decodeContent, readContentBytes, textSliceEnd } from "../utils/content-reader.js";
 import { readPdfPages } from "../utils/pdf-extractor.js";
+import { readImage } from "../utils/image-reader.js";
 import { MAX_FILE_SIZE } from "../utils/file-validator.js";
 import { getSubmissionHistory } from "../services/assignments.js";
 import { object, rows, str, num, id } from "../services/data.js";
@@ -138,7 +139,7 @@ export const registerReadCourseContent = defineTool(
   {
     name: "read_course_content",
     title: "Read Course Content",
-    description: "Read a PDF, HTML, or plain-text file: a course content topic (topicId from get_course_content) or an attachment (assignment brief files from get_assignments, instructor feedback files on your own submissions from get_submission_history, announcement files from get_announcements). PDF results include physical 1-based page numbers for citations, plus an image of each page by default so scans, diagrams and equations are readable (pageImages: false for text only). Follow nextCursor until null to read more, using the same courseId and topicId or attachment and omitting page selection. Reads in memory; no file saves, OCR, external links, or completion updates.",
+    description: "Read a PDF, HTML, plain-text or image (PNG, JPEG, GIF, WebP, BMP) file: a course content topic (topicId from get_course_content) or an attachment (assignment brief files from get_assignments, instructor feedback files on your own submissions from get_submission_history, announcement files from get_announcements). PDF results include physical 1-based page numbers for citations, plus an image of each page by default so scans, diagrams and equations are readable (pageImages: false for text only). Follow nextCursor until null to read more, using the same courseId and topicId or attachment and omitting page selection. Images are returned as an image block, downscaled to 1568 px on the longest edge when larger. Reads in memory; no file saves, OCR, external links, or completion updates.",
     schema: ReadCourseContentSchema,
   },
   async ({ courseId, topicId, attachment, startPage, endPage, maxChars, cursor, pageImages }, { apiClient, config }) => {
@@ -170,6 +171,16 @@ export const registerReadCourseContent = defineTool(
       const digest = createHash("sha256").update(contentType).update("\0").update(filename).update("\0").update(buffer).digest("hex");
       if (previous && previous.digest !== digest) {
         throw new ContentReadError("The document changed since the previous response. Restart reading without a cursor.");
+      }
+      const image = await readImage(buffer);
+      if (image) {
+        if (startPage !== undefined || endPage !== undefined || cursor) throw new ContentReadError("Page selection and cursors are only available for PDF and text files.");
+        const { data, ...details } = image;
+        const payload = { courseId, ...resolved.reference, title: resolved.title, filename, format: "image", sourceUrl: resolved.sourceUrl, ...details, nextCursor: null };
+        // No structuredContent: clients that prefer it would hide the image block.
+        return { content: [...toolResponse(payload).content,
+          { type: "text" as const, text: `Image ${filename} (${image.width}x${image.height}${image.resized ? `, downscaled from ${image.originalWidth}x${image.originalHeight}` : ""}):` },
+          { type: "image" as const, mimeType: image.mimeType, data }] };
       }
       const decoded = await decodeContent(buffer, contentType, filename);
       const metadata = {

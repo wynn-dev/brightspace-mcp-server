@@ -1,6 +1,6 @@
 {
   "name": "brightspace-mcp-server",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "description": "MCP server for Brightspace (D2L). Check grades, due dates, assignments, announcements, syllabus, rosters and more via Claude, ChatGPT, Cursor, Windsurf, or any MCP client.",
   "type": "module",
