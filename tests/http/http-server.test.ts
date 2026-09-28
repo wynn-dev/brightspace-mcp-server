@@ -251,7 +251,8 @@ describe("Streamable HTTP MCP server", () => {
         const result = await client.callTool({ name: "read_course_content", arguments: { courseId: 3, topicId: 10, startPage: 2 } });
         expect(result.isError).toBeFalsy();
         const payload = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-        expect(payload.pages).toEqual([{ page: 2, offset: 0, text: "Lecture two", hasText: true }]);
+        expect(payload.pages).toEqual([{ page: 2, offset: 0, text: "Lecture two", hasText: true, imageIncluded: true }]);
+        expect(result.content).toContainEqual(expect.objectContaining({ type: "image", mimeType: "image/jpeg" }));
         expect(payload.nextCursor).toBeNull();
         expect(secureDownload).not.toHaveBeenCalled();
       } finally {

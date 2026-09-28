@@ -12,6 +12,8 @@ import { ApiError, RateLimitError, NetworkError } from "./errors.js";
 import { log } from "../utils/logger.js";
 import { recordRead, errorState, countRead } from "../utils/read-status.js";
 
+const MAX_RETRY_AFTER_SECONDS = 10;
+
 /**
  * D2L API client with authentication, caching, rate limiting, and version discovery.
  *
@@ -52,9 +54,11 @@ export class D2LApiClient {
 
     // Initialize cache and rate limiter
     this.cache = new TTLCache();
+    // A 429 is retried once (see retryRateLimited), so the throttle can let
+    // aggregate tools fan out without serializing on a few requests/sec.
     const rateLimitConfig = options.rateLimitConfig ?? {
-      capacity: 10,
-      refillRate: 3,
+      capacity: 20,
+      refillRate: 10,
     };
     this.rateLimiter = new TokenBucket(
       rateLimitConfig.capacity,
@@ -129,7 +133,7 @@ export class D2LApiClient {
     }
 
     // Make request with retry logic
-    return this.makeRequest<T>(path, token, options);
+    return this.retryRateLimited(() => this.makeRequest<T>(path, token, options));
   }
 
   /**
@@ -165,7 +169,26 @@ export class D2LApiClient {
     }
 
     // Make request with retry logic
-    return this.makeRawRequest(path, token);
+    return this.retryRateLimited(() => this.makeRawRequest(path, token));
+  }
+
+  /**
+   * Retry once after a 429, honouring Retry-After (default 1s). Waits longer
+   * than MAX_RETRY_AFTER_SECONDS surface as a RateLimitError instead of
+   * stalling the tool call.
+   */
+  private async retryRateLimited<T>(request: () => Promise<T>): Promise<T> {
+    try {
+      return await request();
+    } catch (error) {
+      if (!(error instanceof RateLimitError)) throw error;
+      const waitSeconds = error.retryAfter ?? 1;
+      if (!(waitSeconds >= 0 && waitSeconds <= MAX_RETRY_AFTER_SECONDS)) throw error;
+      log("INFO", `Rate limited on ${error.endpoint}; retrying in ${waitSeconds}s`);
+      await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+      await this.rateLimiter.consume();
+      return request();
+    }
   }
 
   /** Serialize invalidation with login so late 401s cannot erase a new session. */

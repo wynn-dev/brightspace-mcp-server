@@ -138,17 +138,13 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         if (!token) {
           log("INFO", "check_auth: Auto-reauthentication failed or produced no valid token");
 
+          const message =
+            "Not authenticated. Auto-reauthentication was attempted but failed. " +
+            "Please run `pnpm run auth` in the project directory to log in. " +
+            "Make sure your stored credentials are correct and your internet connection is stable.";
           return {
-            structuredContent: discovery,
-            content: [
-              {
-                type: "text",
-                text:
-                  "Not authenticated. Auto-reauthentication was attempted but failed. " +
-                  "Please run `pnpm run auth` in the project directory to log in. " +
-                  "Make sure your stored credentials are correct and your internet connection is stable.",
-              },
-            ],
+            structuredContent: { authenticated: false, message, ...discovery },
+            content: [{ type: "text", text: message }],
           };
         }
 
@@ -158,14 +154,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       const expiresIn = Math.round((token.expiresAt - Date.now()) / 1000 / 60);
       log("INFO", `check_auth: Token valid, expires in ~${expiresIn} minutes`);
 
+      const message = `Authenticated with Brightspace. Token expires in ~${expiresIn} minutes. Source: ${token.source}.`;
       return {
-        structuredContent: discovery,
-        content: [
-          {
-            type: "text",
-            text: `Authenticated with Brightspace. Token expires in ~${expiresIn} minutes. Source: ${token.source}.`,
-          },
-        ],
+        structuredContent: { authenticated: true, message, expiresInMinutes: expiresIn, source: token.source, ...discovery },
+        content: [{ type: "text", text: message }],
       };
     }
   );

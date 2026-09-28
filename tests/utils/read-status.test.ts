@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { withReadStatus, readSource, countRead, recordRead } from "../../src/utils/read-status.js";
 import { getAllObjectListPages, getAllLpPages, ApiError } from "../../src/api/index.js";
-const result = async () => ({ content: [{ type: "text" as const, text: "{}" }] });
+const result = async () => ({ content: [{ type: "text" as const, text: "{}" }], structuredContent: {} });
 describe("read-status isolation and pagination reliability", () => {
   it("isolates simultaneous requests and records cached freshness without overwriting it", async () => {
     const [a, b] = await Promise.all([
@@ -33,5 +33,12 @@ describe("read-status isolation and pagination reliability", () => {
     await expect(getAllObjectListPages({ get: vi.fn().mockResolvedValue({ SomethingElse: [] }) }, "/a")).rejects.toThrow("Invalid paged response");
     const r = await withReadStatus(async () => { for (let i = 0; i < 200; i++) countRead(); expect(() => countRead()).toThrow(); return result(); });
     expect(r.structuredContent?.readStatus).toMatchObject({ partial: true, limits: [expect.stringContaining("200 reads")] });
+  });
+  it("merges readStatus into the payload and never emits it as the only structured content", async () => {
+    const withPayload = await withReadStatus(async () => ({ content: [{ type: "text" as const, text: "[1]" }], structuredContent: { items: [1] } }));
+    expect(withPayload.structuredContent).toMatchObject({ items: [1], readStatus: { partial: false } });
+    const textOnly = await withReadStatus(async () => ({ content: [{ type: "text" as const, text: "[1]" }] }));
+    expect(textOnly.structuredContent).toBeUndefined();
+    expect(JSON.parse((textOnly.content[1] as { text: string }).text).readStatus).toMatchObject({ partial: false });
   });
 });

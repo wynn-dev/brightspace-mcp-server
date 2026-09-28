@@ -80,6 +80,8 @@ export const ReadCourseContentSchema = z.object({
     .describe("Maximum extracted text characters per response (default 20000, maximum 50000)."),
   cursor: z.string().min(1).max(2048).optional()
     .describe("Opaque nextCursor from a previous response for this document. Omit page selection when continuing."),
+  pageImages: z.boolean().default(true)
+    .describe("PDF only: also return each page as an image (up to 5 pages per response) so scans, diagrams and equations are readable. Set false for text only (up to 20 pages per response)."),
 }).strict();
 
 export const DownloadFileSchema = z.object({

@@ -57,6 +57,20 @@ describe("personal deadlines", () => {
     expect(result.assignments.every((a: any) => !a.personalDatesVerified)).toBe(true);
     expect(api.requested.filter(p => p.includes("specialaccess"))).toHaveLength(1);
   });
+  it("probes once per kind even when detail reads run concurrently", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...folders[0], Id: i + 1 }));
+    const api = fakeApiClient({ ...routes, "/dropbox/folders/": many, "/specialaccess/42": forbidden });
+    const result = await fetchCourseAssignments(api, 5, { limit: 100 });
+    expect(result.assignments.map(a => a.id)).toEqual(many.map(f => f.Id));
+    expect(api.requested.filter(p => p.includes("specialaccess"))).toHaveLength(1);
+    expect(result.assignments.slice(1).every(a => a.specialAccessStatus === "not_checked_after_denial")).toBe(true);
+  });
+  it("skips submission reads for assignments rejected by submissionsFor", async () => {
+    const api = fakeApiClient({ ...routes, "/dropbox/folders/": [...folders, { ...folders[0], Id: 2, DueDate: "2027-01-01T00:00:00Z" }] });
+    const result = await fetchCourseAssignments(api, 5, { submissionsFor: dates => dates.dueDate === folders[0].DueDate });
+    expect(api.requested.filter(p => p.includes("mysubmissions"))).toEqual(["/d2l/api/le/1.0/5/dropbox/folders/1/submissions/mysubmissions/"]);
+    expect(result.assignments[1]).toMatchObject({ id: 2, state: "unknown", submissionStatus: "not_requested" });
+  });
   it("uses the current user's ongoing attempt deadline without asserting future-attempt settings", async () => {
     const api = fakeApiClient({ "/users/whoami": { Identifier: "42" }, "/dropbox/folders/": [], "/quizzes/": [{ QuizId: 2, DueDate: "2026-09-10T00:00:00Z" }],
       "/attempts/": [{ UserId: 42, AttemptId: 1, AttemptNumber: 1, Started: "2026-09-11T00:00:00Z", Completed: null, AttemptDueDate: "2026-09-20T00:00:00Z" }], "/specialaccess/42": forbidden });

@@ -106,7 +106,7 @@ Registered in `src/server.ts` via `src/tools/index.ts`, schemas in `src/tools/sc
 | `get_checklists` | Checklist categories/items/dates; completion unknown |
 | `download_file` | Download a file attachment (PDF, slides, etc.) — stdio only |
 
-All data tools include a second text block plus `structuredContent.readStatus` with source freshness, access failures and limits. Check `partial` before interpreting an empty result. Follow `nextOffset` or discussion `nextPage` with unchanged filters. File reading uses its separate content-bound `nextCursor`. Never equate unavailable data with no work, active enrollment with current semester, or null grades with zero.
+All data tools include a second text block plus `structuredContent.readStatus` with source freshness, access failures and limits. `structuredContent` must carry the full payload (arrays as `items`) because structured-content clients show it instead of the text; `read_course_content` responses with PDF page images omit it so the image blocks stay visible. Check `partial` before interpreting an empty result. Follow `nextOffset` or discussion `nextPage` with unchanged filters. File reading uses its separate content-bound `nextCursor`. Never equate unavailable data with no work, active enrollment with current semester, or null grades with zero.
 
 The HTTP transport exposes 20 tools; stdio adds `download_file`. HTTP `get_syllabus` uses a strict schema without `downloadPath`. Read-only tools must use GET-only API methods and must not write files or update read/completion state. Grade scenarios must fail closed when rules, exemptions or pagination completeness cannot be verified.
 

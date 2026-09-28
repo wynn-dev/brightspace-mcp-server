@@ -47,7 +47,11 @@ export async function readSource<T>(source: string, fn: () => Promise<T>): Promi
   }
 }
 
-/** Keep the established first content block; metadata is also readable by text-only clients. */
+/**
+ * Keep the established first content block; metadata is also readable by text-only clients.
+ * Clients that support structuredContent display it instead of the text, so readStatus is only
+ * merged into an existing structured payload — never emitted as the sole structured content.
+ */
 export async function withReadStatus(fn: () => Promise<CallToolResult>): Promise<CallToolResult> {
   const trace: Trace = { startedAt: new Date().toISOString(), sources: new Map(), limits: new Set(), requests: 0 };
   return storage.run(trace, async () => {
@@ -62,7 +66,7 @@ export async function withReadStatus(fn: () => Promise<CallToolResult>): Promise
     };
     return {
       ...result,
-      structuredContent: { ...result.structuredContent, readStatus },
+      ...result.structuredContent ? { structuredContent: { ...result.structuredContent, readStatus } } : {},
       content: [...result.content, { type: "text", text: JSON.stringify({ readStatus }) }],
     };
   });
