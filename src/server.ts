@@ -22,13 +22,11 @@ import {
   registerGetGradeSummary,
   registerSearchCourse,
   registerGetMyCourses,
-  registerGetUpcomingDueDates,
   registerGetMyGrades,
   registerGetAnnouncements,
   registerGetAssignments,
   registerGetCourseContent,
   registerDownloadFile,
-  registerGetClasslistEmails,
   registerGetRoster,
   registerGetSyllabus,
   registerReadOnlyGetSyllabus,
@@ -56,19 +54,29 @@ const COMMON_TOOLS = [
   registerGetGradeSummary,
   registerSearchCourse,
   registerGetMyCourses,
-  registerGetUpcomingDueDates,
   registerGetMyGrades,
   registerGetAnnouncements,
   registerGetAssignments,
   registerGetCourseContent,
   registerReadCourseContent,
-  registerGetClasslistEmails,
   registerGetRoster,
   registerGetDiscussions
 ];
 export function toolNames(includeDownloadFile = false): string[] {
   return ["check_auth", ...COMMON_TOOLS.map(tool => tool.toolName), "get_syllabus", ...(includeDownloadFile ? ["download_file"] : [])];
 }
+
+/** Sent to clients at initialization: which tool answers which student question. */
+export const SERVER_INSTRUCTIONS = [
+  "Read-only access to the user's D2L Brightspace courses. Course-scoped tools accept courseId or course (a course name or code).",
+  "Routing: what's due, overdue or to do this week -> get_my_work. Calendar events, reminders, availability windows -> get_calendar.",
+  "Grades and final grade -> get_my_grades; how the grade is calculated or what-if scores -> get_grade_summary.",
+  "Assignment details, rubrics, feedback -> get_assignments (detail) and get_submission_history.",
+  "What's new or missed -> get_course_updates; announcements -> get_announcements.",
+  "Course materials -> get_course_content (outline), then read_course_content with a file topicId. Keyword search -> search_course.",
+  "Staff and classmates -> get_roster. Syllabus -> get_syllabus. Groups -> get_my_groups. Discussions -> get_discussions.",
+  "Each result has readStatus: if partial is true, some sources failed or were limited, so do not conclude that nothing exists. Unknown completion is not the same as unfinished.",
+].join("\n");
 
 interface McpServerDeps {
   apiClient: D2LApiClient;
@@ -104,7 +112,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     version,
     description:
       "Brightspace MCP Server — by Rohan Muppa (github.com/rohanmuppa/brightspace-mcp-server)",
-  });
+  }, { instructions: SERVER_INSTRUCTIONS });
 
   const discovery = { serverVersion: version, tools: toolNames(includeDownloadFile),
     transport: includeDownloadFile ? "stdio" : "http",
@@ -166,6 +174,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   if (includeDownloadFile) registerDownloadFile(server, apiClient, config);
   (includeDownloadFile ? registerGetSyllabus : registerReadOnlyGetSyllabus)(server, apiClient, config);
 
-  log("DEBUG", `MCP tools registered (${includeDownloadFile ? 21 : 20} including check_auth)`);
+  log("DEBUG", `MCP tools registered (${toolNames(includeDownloadFile).length} including check_auth)`);
   return server;
 }

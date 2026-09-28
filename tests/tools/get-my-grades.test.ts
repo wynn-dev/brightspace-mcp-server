@@ -40,13 +40,15 @@ describe("get_my_grades", () => {
       },
       expect.objectContaining({ name: "Lab 1", comments: null }),
     ]);
-    expect(apiClient.requested).toEqual(["/d2l/api/le/1.0/7/grades/values/myGradeValues/"]);
+    expect(result).toMatchObject({ finalGrade: null, finalGradeStatus: "not_found" });
+    expect(apiClient.requested).toEqual(["/d2l/api/le/1.0/7/grades/values/myGradeValues/", "/d2l/api/le/1.0/7/grades/final/values/myGradeValue"]);
   });
 
   it("fans out across enrolled courses and skips ones that return 403", async () => {
     const apiClient = fakeApiClient({
       "/enrollments/myenrollments/": enrollmentsPage([enrollment(1, "Alpha"), enrollment(2, "Beta")]),
       "/1/grades/values/myGradeValues/": [gradeValue("Exam")],
+      "/1/grades/final/values/myGradeValue": { DisplayedGrade: "8.5", PointsNumerator: 85, PointsDenominator: 100 },
       "/2/grades/values/myGradeValues/": () => {
         throw new ApiError(403, "/x", "forbidden");
       },
@@ -56,7 +58,8 @@ describe("get_my_grades", () => {
     const result = parse(await call({}));
 
     expect(result).toEqual({
-      courses: [{ courseId: 1, courseName: "Alpha", grades: [expect.objectContaining({ name: "Exam" })] }],
+      courses: [{ courseId: 1, courseName: "Alpha", finalGrade: { displayGrade: "8.5", points: 85, maxPoints: 100 },
+        finalGradeStatus: "available", grades: [expect.objectContaining({ name: "Exam" })] }],
     });
   });
 });

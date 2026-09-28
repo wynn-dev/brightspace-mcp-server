@@ -187,7 +187,7 @@ describe("Streamable HTTP MCP server", () => {
 
         const { tools } = await client.listTools();
         const names = tools.map((t) => t.name).sort();
-        expect(names).toHaveLength(20);
+        expect(names).toHaveLength(18);
         expect(names).toContain("get_my_courses");
         expect(names).toContain("check_auth");
         expect(names).toContain("read_course_content");

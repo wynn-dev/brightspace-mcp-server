@@ -6,13 +6,11 @@
 
 // Tool registration functions - barrel export
 export { registerGetMyCourses } from "./get-my-courses.js";
-export { registerGetUpcomingDueDates } from "./get-upcoming-due-dates.js";
 export { registerGetMyGrades } from "./get-my-grades.js";
 export { registerGetAnnouncements } from "./get-announcements.js";
 export { registerGetAssignments } from "./get-assignments.js";
 export { registerGetCourseContent } from "./get-course-content.js";
 export { registerDownloadFile } from "./download-file.js";
-export { registerGetClasslistEmails } from "./get-classlist-emails.js";
 export { registerGetRoster } from "./get-roster.js";
 export { registerGetSyllabus, registerReadOnlyGetSyllabus } from "./get-syllabus.js";
 export { registerReadCourseContent } from "./read-course-content.js";

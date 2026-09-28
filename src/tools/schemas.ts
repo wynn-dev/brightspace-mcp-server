@@ -30,12 +30,6 @@ export const GetMyCoursesSchema = z.object({
     ),
 });
 
-export const GetUpcomingDueDatesSchema = z.object({
-  includeReminders: z.boolean().default(false).describe("Also include calendar reminders, explicitly labelled as reminders rather than deadlines."),
-  daysAhead: z.coerce.number().int().min(1).max(90).default(7).describe("Number of days ahead to look for due dates"),
-  courseId: z.coerce.number().int().positive().optional().describe("Filter to a specific course ID"),
-});
-
 export const GetMyGradesSchema = z.object({
   courseId: z.coerce.number().int().positive().optional().describe("Course ID to get grades for. If omitted, returns grades for all enrolled courses."),
 });
@@ -66,11 +60,6 @@ export const GetCourseContentSchema = z.object({
     .describe("Limit recursive depth of the content tree. Depth 1 returns top-level modules with direct children only. Useful for getting a table of contents without all nested content."),
   includeDescriptions: z.boolean().default(false)
     .describe("Return full module/topic descriptions as Markdown instead of short snippets."),
-});
-
-export const GetClasslistEmailsSchema = z.object({
-  courseId: z.coerce.number().int().positive()
-    .describe("Course ID to get emails for."),
 });
 
 export const ReadCourseContentSchema = z.object({

@@ -13,7 +13,7 @@ import { loadEnvFiles } from "./utils/env.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
 import { D2LApiClient } from "./api/index.js";
-import { createMcpServer, PKG_VERSION } from "./server.js";
+import { createMcpServer, PKG_VERSION, toolNames } from "./server.js";
 
 // ── Subcommand routing (before any MCP initialization) ──────────────
 const subcommand = process.argv[2];
@@ -88,7 +88,7 @@ if (subcommand === 'setup') {
       const transport = new StdioServerTransport();
       await server.connect(transport);
 
-      log("INFO", "Brightspace MCP Server by Rohan Muppa — running on stdio (21 tools registered)");
+      log("INFO", `Brightspace MCP Server by Rohan Muppa — running on stdio (${toolNames(true).length} tools registered)`);
       log("INFO", "Setup: see README.md for MCP client configuration (Claude Desktop, ChatGPT Desktop, Cursor, etc.)");
     } catch (error) {
       log("ERROR", "MCP Server failed to start", error);

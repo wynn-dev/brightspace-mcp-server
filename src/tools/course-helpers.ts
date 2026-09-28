@@ -87,3 +87,35 @@ export async function settleAcrossCourses<R>(
 
   return values;
 }
+
+export type CourseResolution = { courseId: number } | { error: string };
+
+const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * Resolve a course name, code or numeric ID to one enrollment. Active
+ * courses are preferred; inactive ones are only searched when no active
+ * course matches. Ambiguous matches return the candidates instead of guessing.
+ */
+export async function resolveCourse(apiClient: D2LApiClient, config: AppConfig, query: string): Promise<CourseResolution> {
+  const trimmed = query.trim();
+  const numeric = /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+  const wanted = normalize(trimmed);
+  if (!wanted) return { error: "Course name is empty. Pass a course name, code or courseId." };
+  for (const activeOnly of [true, false]) {
+    const courses = await fetchEnrolledCourses(apiClient, config, { activeOnly });
+    // A number is an ID only if it is one of your enrollments; otherwise it is text such as a year.
+    if (numeric !== null && courses.some(c => c.id === numeric)) return { courseId: numeric };
+    const matches = courses.filter(c => normalize(`${c.code} ${c.name}`).includes(wanted));
+    const exact = matches.filter(c => normalize(c.code) === wanted || normalize(c.name) === wanted);
+    const chosen = exact.length === 1 ? exact : matches;
+    if (chosen.length === 1) return { courseId: chosen[0].id };
+    if (chosen.length > 1) {
+      const list = chosen.slice(0, 10).map(c => `${c.id} (${c.code}: ${c.name})`).join("; ");
+      return { error: `"${trimmed}" matches ${chosen.length} courses: ${list}. Retry with courseId or a more specific course name.` };
+    }
+  }
+  // An unlisted numeric ID may still be accessible (e.g. filtered out by configuration).
+  if (numeric !== null) return { courseId: numeric };
+  return { error: `No enrolled course matches "${trimmed}". Use get_my_courses to list courses.` };
+}
