@@ -11,11 +11,18 @@ export const registerGetMyWork = defineTool({ name: "get_my_work", title: "Get M
 async ({ courseId, daysAhead, daysBehind, includeCompleted, includeUndated, offset, limit }, { apiClient, config }) => {
   const courses = courseId ? [{ id: courseId, name: null }] : await fetchEnrolledCourses(apiClient, config);
   const now = Date.now(), start = new Date(now - daysBehind * 86400000).toISOString(), end = new Date(now + daysAhead * 86400000).toISOString();
+  // Submission state only matters for work the date filter below can select.
+  const inWindow = (due: string | null) => due ? Date.parse(due) >= Date.parse(start) && Date.parse(due) <= Date.parse(end) : includeUndated;
+  const [perCourse, calendar] = await Promise.all([
+    Promise.all(courses.map(course => Promise.all([
+      fetchCourseAssignments(apiClient, course.id, { limit: 100, submissionsFor: dates => inWindow(dates.dueDate) }),
+      readList(apiClient, apiClient.le(course.id, "/content/myItems/")),
+    ]))),
+    fetchCalendar(apiClient, courses.map(c => c.id), start, end, "UTC", false),
+  ]);
   const work: Row[] = [], sources = [];
-  for (const course of courses) {
-    const [assignments, content] = await Promise.all([
-      fetchCourseAssignments(apiClient, course.id, { limit: 100 }), readList(apiClient, apiClient.le(course.id, "/content/myItems/")),
-    ]);
+  for (const [i, course] of courses.entries()) {
+    const [assignments, content] = perCourse[i];
     if (assignments.nextOffset !== null) recordLimit(`Work overview: first 100 assignments/quizzes for course ${course.id}; use get_assignments pagination`);
     sources.push({ courseId: course.id, ...assignments.sources, scheduledContent: content.status });
     for (const a of assignments.assignments) work.push({ type: a.type, id: a.id, name: a.name, state: a.state,
@@ -29,7 +36,6 @@ async ({ courseId, daysAhead, daysBehind, includeCompleted, includeUndated, offs
       isExempt: typeof c.IsExempt === "boolean" ? c.IsExempt : null, completionType: num(c.CompletionType),
       state: c.IsExempt === true ? "exempt" : c.DateCompleted ? "completed" : [1, 2].includes(num(c.CompletionType) ?? -1) ? "incomplete" : "unknown" });
   }
-  const calendar = await fetchCalendar(apiClient, courses.map(c => c.id), start, end, "UTC", false);
   // Cross-source identities are not reliably comparable: preserve them instead of silently merging distinct tasks.
   for (const event of calendar.events.filter(e => e.kind === "due_date")) work.push({ type: "calendar_deadline", id: event.id,
     courseId: event.courseId, name: event.title, dueDate: event.startDate, dueDay: event.startDay, datesScope: "calendar", endDate: null, state: "unknown", source: "calendar", sourceUrl: event.sourceUrl });
@@ -38,8 +44,7 @@ async ({ courseId, daysAhead, daysBehind, includeCompleted, includeUndated, offs
     if (!includeCompleted && ["completed", "submitted", "attempt_completed", "exempt"].includes(String(w.state))) return false;
     // All-day calendar deadlines were already restricted by the API window.
     if (str(w.dueDay)) return true;
-    const due = str(w.dueDate);
-    const withinWindow = due ? Date.parse(due) >= Date.parse(start) && Date.parse(due) <= Date.parse(end) : includeUndated;
+    const withinWindow = inWindow(str(w.dueDate));
     if (!withinWindow && w.source === "assignments" && !w.personalDatesVerified && w.datesSource !== "active_attempt") unverifiedDatesOutsideWindow++;
     return withinWindow;
   }).map((w): Row => ({ ...w,

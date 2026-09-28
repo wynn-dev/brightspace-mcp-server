@@ -11,6 +11,17 @@ import { ContentReadError } from "../utils/content-reader.js";
 import { log } from "../utils/logger.js";
 
 /**
+ * Structured form of a tool payload. Clients that support structuredContent
+ * (e.g. claude.ai) show it instead of the text blocks, so it must carry the
+ * full payload. It has to be a JSON object, so arrays are wrapped as items.
+ */
+export function structuredPayload(data: unknown): Record<string, unknown> {
+  return data !== null && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : { items: data };
+}
+
+/**
  * Wrap data as MCP-compatible tool result
  */
 export function toolResponse(data: unknown): CallToolResult {
@@ -21,6 +32,7 @@ export function toolResponse(data: unknown): CallToolResult {
         text: JSON.stringify(data, null, 2),
       },
     ],
+    structuredContent: structuredPayload(data),
   };
 }
 
@@ -35,6 +47,7 @@ export function errorResponse(message: string): CallToolResult {
         text: message,
       },
     ],
+    structuredContent: { error: message },
     isError: true,
   };
 }

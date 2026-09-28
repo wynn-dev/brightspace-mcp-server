@@ -426,10 +426,37 @@ describe("D2LApiClient", () => {
         text: async () => "Rate limited",
       });
 
-      // Should throw RateLimitError
+      // Retry-After beyond the retry cap surfaces immediately
       await expect(
         client.get("/d2l/api/lp/1.56/users/whoami"),
       ).rejects.toThrow(RateLimitError);
+    });
+
+    it("retries once after a short Retry-After, then gives up", async () => {
+      const client = new D2LApiClient({
+        baseUrl: "https://purdue.brightspace.com",
+        tokenManager: mockTokenManager,
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          { ProductCode: "lp", LatestVersion: "1.56" },
+          { ProductCode: "le", LatestVersion: "1.91" },
+        ],
+        headers: new Headers(),
+      });
+      await client.initialize();
+      await mockTokenManager.setToken(createMockToken());
+
+      const limited = () => ({ ok: false, status: 429, headers: new Headers({ "Retry-After": "0" }), text: async () => "" });
+      mockFetch.mockResolvedValueOnce(limited()).mockResolvedValueOnce({
+        ok: true, status: 200, json: async () => ({ Identifier: "1" }), headers: new Headers(),
+      });
+      await expect(client.get("/d2l/api/lp/1.56/users/whoami")).resolves.toEqual({ Identifier: "1" });
+
+      mockFetch.mockResolvedValueOnce(limited()).mockResolvedValueOnce(limited());
+      await expect(client.get("/d2l/api/lp/1.56/users/whoami")).rejects.toThrow(RateLimitError);
     });
   });
 

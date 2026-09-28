@@ -106,5 +106,15 @@ describe("defineTool", () => {
     const result = await call({});
     expect(result.isError).toBe(true);
     expect(text(result)).toBe("bad path");
+    expect(result.structuredContent).toMatchObject({ error: "bad path", readStatus: { partial: true } });
+  });
+
+  it("puts the full payload in structuredContent, wrapping arrays as items", async () => {
+    const make = (data: unknown) => captureTool(defineTool(
+      { name: "demo", title: "D", description: "d", schema: Schema }, async () => toolResponse(data)), fakeApiClient()).call;
+    expect((await make({ a: 1 })({})).structuredContent).toMatchObject({ a: 1, readStatus: { partial: false } });
+    const listed = await make([{ id: 1 }])({});
+    expect(listed.structuredContent).toMatchObject({ items: [{ id: 1 }] });
+    expect(parse(listed)).toEqual([{ id: 1 }]);
   });
 });

@@ -22,10 +22,10 @@ export const registerReadCourseContent = defineTool(
   {
     name: "read_course_content",
     title: "Read Course Content",
-    description: "Read text from a PDF, HTML, or plain-text course file. Find topicId using get_course_content first. PDF results include physical 1-based page numbers for citations. Follow nextCursor until null to read more, using the same courseId and topicId and omitting page selection. Extracts text in memory; no file saves, OCR, external links, or completion updates.",
+    description: "Read a PDF, HTML, or plain-text course file. Find topicId using get_course_content first. PDF results include physical 1-based page numbers for citations, plus an image of each page by default so scans, diagrams and equations are readable (pageImages: false for text only). Follow nextCursor until null to read more, using the same courseId and topicId and omitting page selection. Reads in memory; no file saves, OCR, external links, or completion updates.",
     schema: ReadCourseContentSchema,
   },
-  async ({ courseId, topicId, startPage, endPage, maxChars, cursor }, { apiClient, config }) => {
+  async ({ courseId, topicId, startPage, endPage, maxChars, cursor, pageImages }, { apiClient, config }) => {
     try {
       if (cursor && (startPage !== undefined || endPage !== undefined)) {
         throw new ContentReadError("Use cursor or page selection, not both.");
@@ -69,12 +69,28 @@ export const registerReadCourseContent = defineTool(
       })).toString("base64url");
 
       if (decoded.format === "pdf") {
-        const result = await readPdfPages(buffer, { page: previous?.page ?? startPage ?? 1, offset: previous?.offset ?? 0 }, previous?.endPage ?? endPage, maxChars);
-        return toolResponse({
+        const result = await readPdfPages(buffer, { page: previous?.page ?? startPage ?? 1, offset: previous?.offset ?? 0 }, previous?.endPage ?? endPage, maxChars, { images: pageImages });
+        const messages = [
+          ...result.pages.some((page) => !page.hasText && !page.imageIncluded) ? ["Some returned pages have no extractable text. They may be blank or scanned; OCR is not supported."] : [],
+          ...result.pages.some((page) => !page.hasText && page.imageIncluded) ? ["Some returned pages have no extractable text; read their page images instead."] : [],
+          ...!result.imagesAvailable ? ["Page images are unavailable on this server; returning text only."] : [],
+          ...result.renderFailures ? ["Some pages could not be rendered as images."] : [],
+        ];
+        const payload = {
           ...metadata, totalPages: result.totalPages, endPage: result.endPage, pages: result.pages,
           nextCursor: result.next ? makeCursor(result.next.page, result.next.offset, result.endPage) : null,
-          ...(result.pages.some((page) => !page.hasText) ? { message: "Some returned pages have no extractable text. They may be blank or scanned; OCR is not supported." } : {}),
-        });
+          ...(messages.length ? { message: messages.join(" ") } : {}),
+        };
+        if (!result.images.length) return toolResponse(payload);
+        // No structuredContent here: clients that support it show it instead of the
+        // content blocks, which would drop the page images.
+        const text = toolResponse(payload).content;
+        return {
+          content: [...text, ...result.images.flatMap(({ page, mimeType, data, width, height }) => [
+            { type: "text" as const, text: `Image of PDF page ${page} (${width}x${height}):` },
+            { type: "image" as const, mimeType, data },
+          ])],
+        };
       }
       if (startPage !== undefined || endPage !== undefined || (previous && (previous.page !== 1 || previous.endPage !== 1))) {
         throw new ContentReadError("Page selection is only available for PDF files.");

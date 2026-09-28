@@ -162,4 +162,19 @@ describe("TokenBucket", () => {
 
     expect(resolved).toBe(true);
   });
+
+  it("spaces concurrent waiters instead of releasing them together", async () => {
+    const bucket = new TokenBucket(2, 10); // 10 tokens per second
+    const resolved: number[] = [];
+    await Promise.all([0, 1, 2, 3, 4].map(i => bucket.consume().then(() => resolved.push(i))).concat([
+      (async () => {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(resolved).toEqual([0, 1]);
+        await vi.advanceTimersByTimeAsync(100);
+        expect(resolved).toEqual([0, 1, 2]);
+        await vi.advanceTimersByTimeAsync(200);
+      })(),
+    ]));
+    expect(resolved).toEqual([0, 1, 2, 3, 4]);
+  });
 });

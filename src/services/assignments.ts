@@ -1,7 +1,7 @@
 import { readSource } from "../utils/read-status.js";
 import type { D2LApiClient } from "../api/index.js";
-import { object, rows, str, num, id, richText, readList, readObject, page, type Row } from "./data.js";
-import { personalDates } from "./personal-dates.js";
+import { object, rows, str, num, id, richText, readList, readObject, page, mapLimit, type Row } from "./data.js";
+import { personalDates, type Dates } from "./personal-dates.js";
 
 const files = (value: unknown) => rows(value).map(f => ({ fileId: id(f.FileId), name: str(f.FileName), size: num(f.Size) }));
 export function mapSubmissionEntities(entities: Row[]) {
@@ -32,9 +32,13 @@ export async function getSubmissionHistory(api: D2LApiClient, courseId: number, 
   });
   return { status: mapped.status, complete: result.complete && mapped.status === "available", ...mapped.data ?? mapSubmissionEntities([]) };
 }
+/** Per-course detail reads (submissions, attempts, special access) in flight at once. */
+const DETAIL_CONCURRENCY = 6;
 export async function fetchCourseAssignments(api: D2LApiClient, courseId: number,
-  options: { offset?: number; limit?: number; folderId?: number; includeDetails?: boolean } = {}) {
-  const { offset = 0, limit = 25, folderId, includeDetails = true } = options;
+  options: { offset?: number; limit?: number; folderId?: number; includeDetails?: boolean;
+    /** Skip the per-folder submission read for assignments whose effective dates fail this check. */
+    submissionsFor?: (dates: Dates) => boolean } = {}) {
+  const { offset = 0, limit = 25, folderId, includeDetails = true, submissionsFor } = options;
   const [folders, quizzes] = await Promise.all([
     folderId ? readObject(api, api.le(courseId, `/dropbox/folders/${folderId}`)).then(r => ({ ...r, data: r.data ? [r.data] : null })) :
       readList(api, api.le(courseId, "/dropbox/folders/")),
@@ -46,19 +50,31 @@ export async function fetchCourseAssignments(api: D2LApiClient, courseId: number
   const user = includeDetails && selected.items.length ?
     await readObject(api, api.lp("/users/whoami")) : null;
   const ownId = id(user?.data?.Identifier);
-  const assignments = [];
   const deniedAccessKinds = new Set<string>();
-  for (const { kind, row: r } of selected.items) {
+  // The first special-access read of each kind runs alone; a 403 there stops probing the rest.
+  const probes = new Map<string, Promise<unknown>>();
+  const datesFor = async (kind: string, itemId: number | null, defaults: Dates) => {
+    const earlier = probes.get(kind);
+    let release = () => {};
+    if (earlier) await earlier; else probes.set(kind, new Promise(resolve => { release = () => resolve(null); }));
+    try {
+      const dates = await personalDates(api, courseId, kind, itemId, ownId, defaults,
+        !includeDetails ? "not_requested" : deniedAccessKinds.has(kind) ? "not_checked_after_denial" : false);
+      if (dates.specialAccessStatus === "forbidden") deniedAccessKinds.add(kind);
+      return dates;
+    } finally { release(); }
+  };
+  const assignments = await mapLimit(selected.items, DETAIL_CONCURRENCY, async ({ kind, row: r }) => {
     if (kind === "assignment") {
       const folder = id(r.Id);
-      const submissions = includeDetails && folder ? await getSubmissionHistory(api, courseId, folder) : null;
       const assessment = object(r.Assessment), availability = object(r.Availability);
-      const dates = await personalDates(api, courseId, kind, folder, ownId,
-        { dueDate: str(r.DueDate), startDate: str(availability.StartDate), endDate: str(availability.EndDate) }, !includeDetails ? "not_requested" : deniedAccessKinds.has(kind) ? "not_checked_after_denial" : false);
-      if (dates.specialAccessStatus === "forbidden") deniedAccessKinds.add(kind);
+      const dates = await datesFor(kind, folder,
+        { dueDate: str(r.DueDate), startDate: str(availability.StartDate), endDate: str(availability.EndDate) });
+      const submissions = includeDetails && folder && (!submissionsFor || submissionsFor(dates)) ?
+        await getSubmissionHistory(api, courseId, folder) : null;
       const state = !submissions || submissions.status !== "available" ? "unknown" : submissions.completionDate ? "completed" :
         submissions.history.length ? "submitted" : !submissions.complete ? "unknown" : [0, 1, 4].includes(num(r.SubmissionType) ?? -1) ? "not_submitted" : "unknown";
-      assignments.push({ type: kind, id: folder, name: str(r.Name), instructions: richText(r.CustomInstructions),
+      return { type: kind, id: folder, name: str(r.Name), instructions: richText(r.CustomInstructions),
         ...dates,
         points: num(assessment.ScoreDenominator), isGroup: r.DropboxType === 1, groupCategoryId: id(r.GroupTypeId),
         submissionType: num(r.SubmissionType), completionType: num(r.CompletionType), gradeItemId: id(r.GradeItemId),
@@ -66,7 +82,7 @@ export async function fetchCourseAssignments(api: D2LApiClient, courseId: number
         customAllowableFileTypes: r.CustomAllowableFileTypes ?? null, rubric: rows(assessment.Rubrics),
         state, submissionStatus: submissions?.status ?? "not_requested", submission: submissions?.history[0] ?? null,
         submissionHistory: submissions?.history ?? [], feedback: submissions?.feedback[0] ?? null,
-        allFeedback: submissions?.feedback ?? [], completionDate: submissions?.completionDate ?? null });
+        allFeedback: submissions?.feedback ?? [], completionDate: submissions?.completionDate ?? null };
     } else {
       const quizId = id(r.QuizId);
       const attempts = includeDetails && ownId && quizId ? await readList(api,
@@ -77,9 +93,7 @@ export async function fetchCourseAssignments(api: D2LApiClient, courseId: number
         feedback: a.IsPublished === true ? richText(a.AttemptFeedback) : "", dueDate: str(a.AttemptDueDate),
       })).sort((a, b) => (b.attemptNumber ?? 0) - (a.attemptNumber ?? 0));
       const allowed = object(r.AttemptsAllowed), timing = object(r.SubmissionTimeLimit);
-      const dates = await personalDates(api, courseId, kind, quizId, ownId,
-        { dueDate: str(r.DueDate), startDate: str(r.StartDate), endDate: str(r.EndDate) }, !includeDetails ? "not_requested" : deniedAccessKinds.has(kind) ? "not_checked_after_denial" : false);
-      if (dates.specialAccessStatus === "forbidden") deniedAccessKinds.add(kind);
+      const dates = await datesFor(kind, quizId, { dueDate: str(r.DueDate), startDate: str(r.StartDate), endDate: str(r.EndDate) });
       const effectiveTiming = dates.specialAccess?.submissionTimeLimit ? object(dates.specialAccess.submissionTimeLimit) : timing;
       const effectiveAllowed = dates.specialAccess?.attemptsAllowed ? object(dates.specialAccess.attemptsAllowed) : allowed;
       const activeAttempt = own.find(a => !a.completed && a.started && a.dueDate && Number.isFinite(Date.parse(a.dueDate)));
@@ -88,7 +102,7 @@ export async function fetchCourseAssignments(api: D2LApiClient, courseId: number
         dates.datesScope = "Due date of the active own-user attempt; other dates and future attempts remain unverified.";
       }
       const scores = own.map(a => a.score).filter((s): s is number => s !== null);
-      assignments.push({ type: kind, id: quizId, name: str(r.Name), instructions: richText(r.Instructions) || richText(r.Description),
+      return { type: kind, id: quizId, name: str(r.Name), instructions: richText(r.Instructions) || richText(r.Description),
         ...dates, gradeItemId: id(r.GradeItemId),
         state: !attempts?.complete ? "unknown" : own.some(a => !a.completed) ? "in_progress" : own.length ? "attempt_completed" : "not_started",
         timeLimit: effectiveTiming.IsEnforced === true ? num(effectiveTiming.TimeLimitValue) : null, isSynchronous: r.IsSynchronous === true,
@@ -98,9 +112,9 @@ export async function fetchCourseAssignments(api: D2LApiClient, courseId: number
           num(allowed.NumberOfAttemptsAllowed) === null ? null : Math.max(0, Number(allowed.NumberOfAttemptsAllowed) - own.length),
         settingsScope: dates.personalDatesVerified ? "Own-user special access applied where provided; remaining attempts are not asserted." :
           "Course defaults; individual special access may change dates, time limits and attempts.",
-        attemptStatus: attempts?.status ?? "unavailable", attempts: own, bestScore: scores.length ? Math.max(...scores) : null });
+        attemptStatus: attempts?.status ?? "unavailable", attempts: own, bestScore: scores.length ? Math.max(...scores) : null };
     }
-  }
+  });
   return { assignments, offset, nextOffset: selected.nextOffset, matchedCount: selected.matchedCount,
     sources: { assignments: folders.status, quizzes: quizzes.status } };
 }

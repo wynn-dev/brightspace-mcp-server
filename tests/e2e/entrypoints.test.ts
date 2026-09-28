@@ -66,12 +66,24 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
         expect(text, name).not.toMatch(/PRIVATE_SECRET|UNRELEASED_SECRET|999/);
         if (name === "check_auth") {
           expect(text).toMatch(/^Authenticated/);
+          expect(response.structuredContent).toMatchObject({ authenticated: true, message: text });
           expect(response.structuredContent?.tools).toEqual(expect.arrayContaining(listed.map(t => t.name)));
           expect(response.structuredContent?.transport).toBe(mode);
           return null;
         }
+        const parsed = JSON.parse(text);
+        const blocks = response.content as Array<{ type: string; text?: string }>;
+        if (blocks.some(b => b.type === "image")) {
+          // Page images live only in content blocks, so these responses carry no structuredContent.
+          expect(response.structuredContent, name).toBeUndefined();
+          expect(JSON.parse(blocks.at(-1)!.text!).readStatus, name).toMatchObject({ partial: false });
+          return parsed;
+        }
         expect(response.structuredContent?.readStatus, name).toMatchObject({ partial: false });
-        return JSON.parse(text);
+        // Structured-content clients (claude.ai) show only structuredContent: it must carry the payload.
+        const { readStatus: _, ...structured } = response.structuredContent!;
+        expect(structured, name).toMatchObject(Array.isArray(parsed) ? { items: parsed } : parsed);
+        return parsed;
       };
       await call("check_auth");
       expect(await call("get_my_courses", { includeDetails: true })).toMatchObject([{ id: 5, name: "Matrix methods" }]);
@@ -109,6 +121,7 @@ describe.each(["stdio", "http"] as const)("production %s entrypoint", mode => {
       const first = await call("read_course_content", { courseId: 5, topicId: 101, maxChars: 21 });
       expect(first.pages).toMatchObject([{ page: 1, text: "Matrix lecture page o" }]);
       expect(first.nextCursor).toBeTruthy();
+      expect(first.pages[0].imageIncluded).toBe(true);
       const rest = await call("read_course_content", { courseId: 5, topicId: 101, cursor: first.nextCursor });
       expect(rest.pages.at(-1)).toMatchObject({ page: 2, text: "Matrix lecture page two" });
       expect(rest.nextCursor).toBeNull();

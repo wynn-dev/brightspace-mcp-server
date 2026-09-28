@@ -34,22 +34,13 @@ export class TokenBucket {
   async consume(count: number = 1): Promise<void> {
     this.refill();
 
-    if (this.tokens >= count) {
-      // Enough tokens available - consume immediately
-      this.tokens -= count;
-      return;
-    }
-
-    // Not enough tokens - calculate wait time
-    const tokensNeeded = count - this.tokens;
-    const waitTimeMs = (tokensNeeded / this.refillRate) * 1000;
-
-    // Wait for tokens to refill
-    await new Promise((resolve) => setTimeout(resolve, waitTimeMs));
-
-    // Refill and consume
-    this.refill();
+    // Reserve immediately. A deficit queues later callers behind earlier ones,
+    // so concurrent waiters cannot all wake on the same refilled token.
     this.tokens -= count;
+    if (this.tokens >= 0) return;
+
+    const waitTimeMs = (-this.tokens / this.refillRate) * 1000;
+    await new Promise((resolve) => setTimeout(resolve, waitTimeMs));
   }
 
   tryConsume(count: number = 1): boolean {

@@ -49,7 +49,7 @@ export const registerGetUpcomingDueDates = defineTool(
 
     const respond = (events: unknown[]) => {
       const result = toolResponse(events);
-      return { ...result, content: [...result.content, { type: "text" as const, text: JSON.stringify(guidance) }], structuredContent: guidance };
+      return { ...result, content: [...result.content, { type: "text" as const, text: JSON.stringify(guidance) }], structuredContent: { ...result.structuredContent, ...guidance } };
     };
     if (!orgUnitIds) return respond([]);
 
